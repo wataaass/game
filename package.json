@@ -1,0 +1,15 @@
+{
+  "name": "lanternfall",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "description": "灯りで闇を払う見下ろしアクションローグライク。依存ゼロ、素材はすべてコードで生成。",
+  "scripts": {
+    "start": "node tools/serve.mjs",
+    "test": "node --test",
+    "lint": "node tools/lint.mjs",
+    "build": "node tools/bundle.mjs",
+    "balance": "node tools/balance.mjs",
+    "check": "npm run lint && npm test && npm run build"
+  }
+}

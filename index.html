@@ -1,0 +1,27 @@
+<!doctype html>
+<html lang="ja">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>LANTERNFALL — 灯火の底</title>
+<meta name="description" content="灯りで闇を払う見下ろしアクションローグライク。絵も音も地形もすべてコードで生成。">
+<style>
+  html, body { margin: 0; height: 100%; background: #050409; overflow: hidden; }
+  body { display: flex; align-items: center; justify-content: center; }
+  #stage { position: relative; width: min(100vw, calc(100vh * 16 / 9)); aspect-ratio: 16 / 9; background: #0b0a12; }
+  #game { position: absolute; inset: 0; width: 100%; height: 100%; display: block; cursor: crosshair; image-rendering: pixelated; }
+  #ui { position: absolute; inset: 0; pointer-events: none; }
+  #fatal { position: absolute; inset: 0; display: none; align-items: center; justify-content: center; padding: 2em; text-align: center;
+    color: #f3ead8; font: 16px/1.8 system-ui, sans-serif; white-space: pre-wrap; }
+</style>
+<link rel="stylesheet" href="src/ui/ui.css">
+</head>
+<body>
+<div id="stage">
+  <canvas id="game"></canvas>
+  <div id="ui"></div>
+  <div id="fatal"></div>
+</div>
+<script type="module" src="src/main.js"></script>
+</body>
+</html>
