@@ -7,8 +7,8 @@ const au_CHORDS = [
 ];
 const au_WIN_CHORD = [50, 54, 57, 62, 66];
 // 声・レイヤーの段で失われた音量をバスでまとめて補う。
-const au_SFX_MAKEUP = 4;
-const au_MUSIC_MAKEUP = 56;
+const au_SFX_MAKEUP = 3.4;
+const au_MUSIC_MAKEUP = 44;
 // イベント種別ごとの最短間隔（秒）と声の寿命（秒）。
 const au_EVENT_GAP = {
   shoot: 0.045, hit: 0.035, spark: 0.06, enemyShoot: 0.07, pickup: 0.04,
@@ -159,8 +159,8 @@ export function createAudio() {
     masterLP.frequency.value = 18000;
     masterLP.Q.value = 0.7;
     const comp = ac.createDynamicsCompressor();
-    comp.threshold.value = -16; comp.knee.value = 18;
-    comp.ratio.value = 4; comp.attack.value = 0.004; comp.release.value = 0.22;
+    comp.threshold.value = -16; comp.knee.value = 12;
+    comp.ratio.value = 8; comp.attack.value = 0.002; comp.release.value = 0.2;
     master.connect(masterLP);
     masterLP.connect(comp);
     comp.connect(ac.destination);
@@ -262,6 +262,8 @@ export function createAudio() {
   }
   function setScene(name) {
     if (name !== 'title' && name !== 'game' && name !== 'paused' && name !== 'dead' && name !== 'win') return;
+    // 場面が変わったら小節の頭からやり直す（次の小節まで音楽が途切れるのを防ぐ）。ポーズの出入りでは続きから。
+    if (name !== scene && name !== 'paused' && scene !== 'paused') { mus.step = 0; mus.next = 0; }
     scene = name;
     au_setScene(name);
   }
@@ -548,10 +550,10 @@ export function createAudio() {
     if (!ac) return;
     const i = mus.intensity;
     let pad = 0, pluck = 0, bass = 0, drums = 0, boss = 0;
-    if (scene === 'title') pad = 0.11;
+    if (scene === 'title') pad = 0.125;
     else if (scene === 'win') pad = 0.38;
     else if (scene !== 'dead') {
-      pad = 0.12 + 0.1 * i;
+      pad = 0.115 + 0.1 * i;
       if (i > 0.25) pluck = 0.15 * Math.min(1, (i - 0.25) / 0.55);
       if (i > 0.4) bass = 0.14 * Math.min(1, (i - 0.4) / 0.45);
       if (i > 0.55) drums = 0.16 * Math.min(1, (i - 0.55) / 0.35);
@@ -596,7 +598,7 @@ export function createAudio() {
     }
   }
   function au_schedulePad(t0, tempo) {
-    const dur = (60 / tempo) * 4 * 1.04;
+    const dur = (60 / tempo) * 4 * 1.4; // 次の小節の和音と少しだけ重ねてつなぐ
     const chord = scene === 'win' ? au_WIN_CHORD : au_CHORDS[(mus.bar - 1) % 4];
     const lp = ac.createBiquadFilter();
     lp.type = 'lowpass';
@@ -631,7 +633,7 @@ export function createAudio() {
     bus.gain.value = 0.0001;
     lp.connect(bus);
     bus.connect(padGain);
-    au_padEnv(bus.gain, t0, dur, 0.045, 0.8);
+    au_padEnv(bus.gain, t0, dur, 0.16, 0.5);
     padFilters = padFilters.filter(x => x.end > ac.currentTime);
     padFilters.push({ f: lp, end: t0 + dur });
   }

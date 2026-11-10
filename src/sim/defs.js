@@ -8,7 +8,7 @@ export const ENEMY = {
   weaver:   { hp: 90,   speed: 2.1, r: 0.42, xp: 5,  cost: 5, dmg: 1, minDepth: 3 },
   sentinel: { hp: 120,  speed: 0,   r: 0.48, xp: 5,  cost: 4, dmg: 1, minDepth: 4 },
   urn:      { hp: 8,    speed: 0,   r: 0.34, xp: 0,  cost: 0, dmg: 0, prop: true },
-  unlit:    { hp: 2300, speed: 2.4, r: 1.25, xp: 60, cost: 0, dmg: 2, boss: true },
+  unlit:    { hp: 2600, speed: 2.4, r: 1.25, xp: 60, cost: 0, dmg: 2, boss: true },
 };
 
 export const BASE_STATS = {
