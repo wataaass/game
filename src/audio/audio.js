@@ -15,14 +15,16 @@ const au_hz = n => 440 * Math.pow(2, (n - 69) / 12);
 const au_CHORD = {
   Dm: ['D', 'F', 'A'], Bb: ['Bb', 'D', 'F'], F: ['F', 'A', 'C'], C: ['C', 'E', 'G'], Gm: ['G', 'Bb', 'D'],
   A: ['A', 'C#', 'E'], Eb: ['Eb', 'G', 'Bb'], Am: ['A', 'C', 'E'], D: ['D', 'F#', 'A'], G: ['G', 'B', 'D'],
-  Cm: ['C', 'Eb', 'G'], E: ['E', 'G#', 'B'],
+  Cm: ['C', 'Eb', 'G'], E: ['E', 'G#', 'B'], Em: ['E', 'G', 'B'],
 };
 
-// 曲データ。1小節 = 16分音符16個。lead は「音名:長さ」、drums は k=キック s=スネア h=ハット o=クラッシュ。
-// 全曲に同じ動機（レ→ラ→レ→ファ）を置いて、場面が変わっても同じゲームの曲に聞こえるようにする。
+// 曲データ。1小節 = 16分音符16個。lead は「音名:長さ」、drums は k=キック s=スネア h=ハット。
+// 曲ごとに音色（wave）・音域（oct）・和音の鳴らし方（arp）・テンポ・ドラムを変えて、聞いてすぐ別の曲と分かるようにする。
+// arp: broken=8分の分散和音 / stab=リズムで刻む / chip=高速アルペジオを鳴らし続ける / octave=根音を16分で上下 / pad=和音を伸ばす / none
 export const AUDIO_TRACKS = {
+  // 1層: 基本の主題（ニ短調）
   explore: {
-    bpm: 96, duty: 0.25, leadVol: 0.17, arpVol: 0.065, bassVol: 0.38, drumVol: 0.5, arp: 'broken', echo: 0.3,
+    bpm: 96, wave: 0.25, leadVol: 0.17, arpVol: 0.065, bassVol: 0.38, drumVol: 0.5, arp: 'broken', echo: 0.3,
     chords: ['Dm', 'Bb', 'F', 'C', 'Dm', 'Bb', 'Gm', 'A'],
     lead: [
       'D5:4 A4:2 D5:2 F5:6 E5:2', 'D5:4 Bb4:2 D5:2 F5:4 G5:4', 'A5:6 G5:2 F5:4 C5:4', 'E5:4 D5:2 C5:2 E5:8',
@@ -31,9 +33,9 @@ export const AUDIO_TRACKS = {
     bass: ['1:6 1:2 5:4 1:4'],
     drums: ['k...h...k.h.h...', 'k...h...k.h.h.h.'],
   },
-  // 2層: 苔むした洞。明るめの長調で、少し弾む
+  // 2層: 苔むした洞。明るい長調、高めの音域、跳ねる和音
   explore2: {
-    bpm: 104, duty: 0.5, leadVol: 0.15, arpVol: 0.06, bassVol: 0.38, drumVol: 0.5, arp: 'broken', echo: 0.28,
+    bpm: 108, wave: 0.5, oct: 12, leadVol: 0.12, arpVol: 0.06, bassVol: 0.38, drumVol: 0.55, arp: 'stab', mask: 'x...x.x.x...x.x.', echo: 0.2,
     chords: ['F', 'C', 'Dm', 'Bb', 'F', 'C', 'Bb', 'C'],
     lead: [
       'A5:4 C6:2 A5:2 F5:4 G5:4', 'G5:4 E5:2 G5:2 C6:6 Bb5:2', 'A5:4 F5:2 D5:2 F5:4 A5:4', 'Bb5:6 A5:2 G5:4 F5:4',
@@ -42,20 +44,20 @@ export const AUDIO_TRACKS = {
     bass: ['1:4 5:2 1:2 8:4 5:4'],
     drums: ['k..hh...k..hh.h.', 'k..hh...k.khh.h.'],
   },
-  // 3層: 冷たい墓所。ゆっくりで音数が少ない
+  // 3層: 冷たい墓所。とても遅く、柔らかい三角波の旋律と伸ばした和音だけ
   explore3: {
-    bpm: 88, duty: 0.125, leadVol: 0.16, arpVol: 0.06, bassVol: 0.36, drumVol: 0.4, arp: 'broken', echo: 0.4,
+    bpm: 66, wave: 'triangle', leadVol: 0.24, arpVol: 0.045, bassVol: 0.27, drumVol: 0.3, arp: 'pad', echo: 0.5,
     chords: ['Gm', 'Eb', 'Bb', 'F', 'Gm', 'Eb', 'Cm', 'D'],
     lead: [
       'G5:6 D5:2 G5:4 Bb5:4', 'G5:8 Eb5:4 G5:4', 'F5:6 D5:2 Bb4:8', 'A5:4 F5:4 C5:8',
       'G5:6 D5:2 G5:4 Bb5:4', 'Bb5:4 G5:4 Eb5:8', 'Eb5:3 G5:3 C6:2 Bb5:4 G5:4', 'A5:8 F#5:8',
     ],
-    bass: ['1:8 5:4 1:4'],
-    drums: ['k.......h.....h.'],
+    bass: ['1:16'],
+    drums: ['........h.......'],
   },
-  // 4層: 熱を帯びた深部。食い気味のリズムで急かす
+  // 4層: 熱を帯びた深部。細い音色の旋律を、16分で脈打つ根音が急かす
   explore4: {
-    bpm: 112, duty: 0.25, leadVol: 0.16, arpVol: 0.06, bassVol: 0.4, drumVol: 0.6, arp: 'broken', echo: 0.25,
+    bpm: 122, wave: 0.125, leadVol: 0.16, arpVol: 0.07, bassVol: 0.4, drumVol: 0.6, arp: 'octave', echo: 0.22,
     chords: ['Am', 'F', 'C', 'G', 'Am', 'F', 'Dm', 'E'],
     lead: [
       'A5:3 E5:3 A5:2 C6:4 B5:4', 'A5:3 F5:3 A5:2 C6:6 A5:2', 'G5:3 E5:3 G5:2 C6:4 E6:4', 'D6:3 B5:3 G5:2 B5:8',
@@ -64,16 +66,17 @@ export const AUDIO_TRACKS = {
     bass: ['1:3 1:3 5:2 1:3 8:3 5:2'],
     drums: ['k..h..k.h.k.h.h.', 'k..h..k.h.k.hkh.'],
   },
-  // 5層: 主の間の手前。半音でにじり寄る、音の少ない不穏な曲
+  // 5層: 主の間の手前。和音なし。低い旋律と持続する低音、心臓の鼓動のようなキックだけ
   explore5: {
-    bpm: 72, duty: 0.125, leadVol: 0.15, arpVol: 0.05, bassVol: 0.4, drumVol: 0.35, arp: 'broken', echo: 0.45,
+    bpm: 60, wave: 0.25, oct: -12, leadVol: 0.16, arpVol: 0, bassVol: 0.3, drumVol: 0.45, arp: 'none', echo: 0.5,
     chords: ['Dm', 'Eb', 'Dm', 'A', 'Dm', 'Eb', 'Gm', 'A'],
     lead: ['D5:8 Eb5:8', 'G5:12 Eb5:4', 'D5:8 A5:8', 'C#5:16', 'D5:8 Eb5:8', 'Bb5:12 G5:4', 'G5:6 F5:6 D5:4', 'E5:8 C#5:8'],
     bass: ['1:16'],
-    drums: ['k...............'],
+    drums: ['k..k............'],
   },
+  // 1層の戦闘: 主題を速くした、まっすぐな曲
   combat: {
-    bpm: 144, duty: 0.5, leadVol: 0.17, arpVol: 0.07, bassVol: 0.42, drumVol: 0.8, arp: 'stab', echo: 0.18,
+    bpm: 144, wave: 0.5, leadVol: 0.17, arpVol: 0.07, bassVol: 0.42, drumVol: 0.8, arp: 'stab', mask: 'x..x..x.x..x..x.', echo: 0.18,
     chords: ['Dm', 'Dm', 'Bb', 'C', 'Dm', 'Dm', 'Bb', 'A'],
     lead: [
       'D5:2 D5:1 F5:1 A5:2 D5:2 F5:2 A5:2 G5:2 F5:2', 'E5:2 E5:1 F5:1 G5:2 E5:2 D5:4 A4:4',
@@ -84,8 +87,56 @@ export const AUDIO_TRACKS = {
     bass: ['1:2 1:2 8:2 1:2 1:2 1:2 8:2 5:2'],
     drums: ['k.h.s.h.k.k.s.h.', 'k.h.s.h.k.k.s.hh', 'k.h.s.h.k.k.s.h.', 'k.h.s.hkk.k.s.ss'],
   },
+  // 2層の戦闘: 長調の勇ましい曲。和音は高速アルペジオを鳴らし続ける
+  combat2: {
+    bpm: 152, wave: 0.25, leadVol: 0.17, arpVol: 0.055, bassVol: 0.4, drumVol: 0.8, arp: 'chip', echo: 0.15,
+    chords: ['G', 'D', 'Em', 'C', 'G', 'D', 'C', 'D'],
+    lead: [
+      'G5:2 B5:2 D6:2 G5:2 B5:2 D6:2 E6:2 D6:2', 'A5:2 D6:2 F#6:2 A5:2 D6:4 A5:4',
+      'E5:2 G5:2 B5:2 E5:2 G5:2 B5:2 C6:2 B5:2', 'C6:4 E6:4 D6:2 C6:2 G5:4',
+      'G5:2 B5:2 D6:2 G6:2 F#6:2 D6:2 B5:2 G5:2', 'A5:3 D6:3 F#6:2 E6:4 D6:4',
+      'C6:3 E6:3 G6:2 E6:4 C6:4', 'D6:4 F#6:4 A6:6 D6:2',
+    ],
+    bass: ['1:2 8:2 1:2 8:2 1:2 8:2 5:2 8:2'],
+    drums: ['k.h.s.h.k.h.s.h.', 'k.h.s.h.k.h.s.hs', 'k.h.s.h.k.h.s.h.', 'k.h.s.h.k.kks.ss'],
+  },
+  // 3層の戦闘: 重く遅い。低い旋律に間を置き、ドラムは半分の速さで叩く
+  combat3: {
+    bpm: 126, wave: 0.5, oct: -12, leadVol: 0.25, arpVol: 0.095, bassVol: 0.36, bassWave: 0.25, drumVol: 0.95, arp: 'stab', mask: 'x.......x.x.....', echo: 0.3,
+    chords: ['Gm', 'Gm', 'Eb', 'F', 'Gm', 'Gm', 'Cm', 'D'],
+    lead: [
+      'G5:4 -:2 G5:2 Bb5:4 A5:2 G5:2', 'D5:6 F5:2 G5:8', 'Eb5:4 -:2 Eb5:2 G5:4 Bb5:4', 'A5:6 F5:2 C6:8',
+      'G5:4 -:2 G5:2 Bb5:4 D6:4', 'C6:3 Bb5:3 A5:2 G5:8', 'C6:4 Eb6:4 D6:4 C6:4', 'D6:6 A5:2 F#5:8',
+    ],
+    bass: ['1:6 1:2 -:4 5:2 8:2'],
+    drums: ['k.....k.s.......', 'k.....k.s...k.k.', 'k.....k.s.......', 'k..k..k.s.s.s.ss'],
+  },
+  // 4層の戦闘: いちばん速い。16分音符で駆け上がる鋭い旋律と、休みなく脈打つ根音
+  combat4: {
+    bpm: 168, wave: 'sawtooth', leadVol: 0.11, arpVol: 0.065, bassVol: 0.42, drumVol: 0.85, arp: 'octave', echo: 0.12,
+    chords: ['Am', 'Am', 'F', 'G', 'Am', 'Am', 'F', 'E'],
+    lead: [
+      'A5:1 C6:1 E6:1 C6:1 A5:1 C6:1 E6:1 C6:1 A5:2 E6:2 A6:4', 'G5:1 B5:1 D6:1 B5:1 G5:1 B5:1 D6:1 B5:1 E6:4 C6:4',
+      'F5:1 A5:1 C6:1 A5:1 F5:1 A5:1 C6:1 A5:1 F6:2 E6:2 C6:4', 'G5:1 B5:1 D6:1 B5:1 G6:2 F6:2 D6:4 B5:4',
+      'A5:1 C6:1 E6:1 C6:1 A5:1 C6:1 E6:1 C6:1 A6:4 G6:2 E6:2', 'C6:2 E6:2 A6:2 E6:2 C6:2 E6:2 A5:4',
+      'F6:3 E6:3 C6:2 A5:3 C6:3 F6:2', 'E6:2 G#6:2 B6:4 G#6:2 E6:2 B5:4',
+    ],
+    bass: ['1:1 1:1 8:2 1:1 1:1 8:2 1:1 1:1 8:2 5:2 8:2'],
+    drums: ['k.shk.shk.shk.sh', 'k.shk.shk.shkkss'],
+  },
+  // 5層の戦闘: 半音で揺れる行進。同じ音を刻む旋律と、軍楽隊のようなスネア
+  combat5: {
+    bpm: 138, wave: 0.125, leadVol: 0.23, arpVol: 0.095, bassVol: 0.34, bassWave: 0.25, drumVol: 0.9, arp: 'octave', echo: 0.2,
+    chords: ['Dm', 'Eb', 'Dm', 'Eb', 'Dm', 'Eb', 'Gm', 'A'],
+    lead: [
+      'D5:3 D5:3 D5:2 Eb5:4 D5:4', 'G5:3 G5:3 G5:2 Bb5:4 G5:4', 'D5:3 D5:3 F5:2 A5:4 F5:4', 'Eb5:3 G5:3 Bb5:2 Eb6:8',
+      'D6:3 D6:3 D6:2 Eb6:4 D6:4', 'Bb5:3 G5:3 Eb5:2 G5:8', 'G5:2 Bb5:2 D6:2 G6:2 F6:4 D6:4', 'E6:4 C#6:4 A5:8',
+    ],
+    bass: ['1:3 1:3 1:2 1:3 1:3 8:2'],
+    drums: ['k..k..s.k..k..s.', 'k..k..s.k.kks.ss'],
+  },
   boss: {
-    bpm: 160, duty: 0.25, leadVol: 0.17, arpVol: 0.07, bassVol: 0.44, drumVol: 0.85, arp: 'stab', echo: 0.15,
+    bpm: 160, wave: 0.25, leadVol: 0.17, arpVol: 0.07, bassVol: 0.44, drumVol: 0.85, arp: 'stab', mask: 'x..x..x.x..x..x.', echo: 0.15,
     chords: ['Dm', 'Eb', 'Dm', 'A', 'Dm', 'Eb', 'F', 'A'],
     lead: [
       'D5:2 A5:2 Ab5:2 A5:2 D5:2 F5:2 Eb5:2 D5:2', 'Eb5:2 Bb5:2 A5:2 Bb5:2 Eb5:2 G5:2 F5:2 Eb5:2',
@@ -97,7 +148,7 @@ export const AUDIO_TRACKS = {
     drums: ['k.hhs.hhk.khs.hh', 'k.hhs.hhkkhhs.ss', 'k.hhs.hhk.khs.hh', 'kkhhs.hkk.kss.ss'],
   },
   title: {
-    bpm: 80, duty: 0.125, leadVol: 0.11, arpVol: 0.045, bassVol: 0.24, drumVol: 0, arp: 'broken', echo: 0.4,
+    bpm: 80, wave: 0.125, leadVol: 0.11, arpVol: 0.045, bassVol: 0.24, drumVol: 0, arp: 'broken', echo: 0.4,
     chords: ['Dm', 'Bb', 'F', 'C', 'Dm', 'Bb', 'Gm', 'A'],
     lead: [
       'D5:8 A4:4 D5:4', 'F5:12 E5:4', 'A5:8 G5:4 F5:4', 'E5:12 C5:4',
@@ -372,7 +423,7 @@ export function createAudio() {
     const T = AUDIO_TRACKS[name], bars = T.lead.length, lead = [], bass = [];
     for (let b = 0; b < bars; b++) {
       let at = b * 16; // 主旋律は譜面より1オクターブ下で鳴らす
-      for (const x of au_parseLine(T.lead[b])) { if (x.n !== '-') lead[at] = { f: au_hz(au_midi(x.n) - 12 + shift), len: x.len }; at += x.len; }
+      for (const x of au_parseLine(T.lead[b])) { if (x.n !== '-') lead[at] = { f: au_hz(au_midi(x.n) - 12 + (T.oct || 0) + shift), len: x.len }; at += x.len; }
       const root = au_midi(au_CHORD[T.chords[b]][0] + '2') + shift;
       at = b * 16;
       for (const x of au_parseLine(T.bass[b % T.bass.length])) {
@@ -387,15 +438,26 @@ export function createAudio() {
   function scheduleStep(c, step, t, s) {
     const T = c.T, bar = (step / 16) | 0, pos = step % 16, ch = au_CHORD[T.chords[bar]];
     const L = c.lead[step];
-    if (L) tone(music, { wave: T.duty, f0: L.f, dur: Math.max(0.05, L.len * s * 0.92), vol: T.leadVol, sustain: 0.62, t, vib: true, echo: true, pan: -0.12 });
+    if (L) tone(music, { wave: T.wave, f0: L.f, dur: Math.max(0.05, L.len * s * 0.92), vol: T.leadVol, sustain: 0.62, t, vib: true, echo: true, pan: -0.12 });
     const B = c.bass[step];
-    if (B) tone(music, { wave: 'triangle', f0: B.f, dur: Math.max(0.05, B.len * s * 0.9), vol: T.bassVol, sustain: 0.85, t });
+    if (B) tone(music, { wave: T.bassWave || 'triangle', f0: B.f, dur: Math.max(0.05, B.len * s * 0.9), vol: T.bassVol, sustain: 0.85, t });
     if (T.arp === 'broken') { // 8分音符の分散和音
       if (pos % 2 === 0) {
         const n = ch[[0, 1, 2, 1, 0, 2, 1, 2][pos >> 1]], oct = pos % 8 === 6 ? '4' : '3';
         tone(music, { wave: 0.125, f0: au_hz(au_midi(n + oct)) * c.k, dur: s * 1.7, vol: T.arpVol, t, pan: 0.3 });
       }
-    } else if ('x..x..x.x..x..x.'[pos] === 'x') { // 和音を高速で回す「チップ和音」をリズムで刻む
+    } else if (T.arp === 'chip') { // 高速アルペジオを途切れなく鳴らす
+      if (pos % 4 === 0) {
+        const f = ch.map(n => au_hz(au_midi(n + '4')) * c.k), st = [];
+        for (let i = 0; i < 12; i++) st.push(f[i % 3] * (i % 6 >= 3 ? 2 : 1));
+        tone(music, { wave: 0.125, f0: f[0], dur: s * 4, vol: T.arpVol, t, steps: st, stepDur: s / 3, pan: 0.3, sustain: 0.9 });
+      }
+    } else if (T.arp === 'octave') { // 根音を16分音符で上下させる
+      const f = au_hz(au_midi(ch[0] + (pos % 2 ? '4' : '3'))) * c.k;
+      tone(music, { wave: 0.25, f0: f, dur: s * 0.8, vol: T.arpVol * (pos % 4 === 0 ? 1.3 : 0.9), t, pan: 0.3 });
+    } else if (T.arp === 'pad') { // 小節の頭で和音を伸ばす
+      if (pos === 0) ch.forEach((n, i) => tone(music, { wave: 'triangle', f0: au_hz(au_midi(n + '4')) * c.k, dur: s * 16, vol: T.arpVol * 2.2, t, attack: 0.3, sustain: 0.9, pan: (i - 1) * 0.4 }));
+    } else if (T.arp === 'stab' && T.mask[pos] === 'x') { // 和音を高速で回す「チップ和音」をリズムで刻む
       const f = ch.map(n => au_hz(au_midi(n + '3')) * c.k);
       tone(music, { wave: 0.125, f0: f[0], dur: s * 1.6, vol: T.arpVol, t, steps: [f[0], f[1], f[2], f[0] * 2, f[1], f[2]], stepDur: (s * 1.6) / 6, pan: 0.3, sustain: 0.8 });
     }
@@ -412,7 +474,8 @@ export function createAudio() {
     if (scene === 'title') return 'title';
     if (scene === 'dead' || scene === 'win' || !G) return null;
     for (const e of G.enemies) if (e.type === 'unlit' && !e.dead) return 'boss';
-    return G.activeRoom >= 0 ? 'combat' : ['explore', 'explore2', 'explore3', 'explore4', 'explore5'][(G.depth - 1) % 5];
+    const d = (G.depth - 1) % 5;
+    return (G.activeRoom >= 0 ? ['combat', 'combat2', 'combat3', 'combat4', 'combat5'] : ['explore', 'explore2', 'explore3', 'explore4', 'explore5'])[d];
   }
 
   function update(G) {
@@ -427,8 +490,6 @@ export function createAudio() {
       if (cur !== want && (cur === null || seq.step % 16 === 0 || want === 'boss')) {
         if (cur !== null && seq.next > now + 0.25) return;
         seq.track = want; seq.step = 0; seq.quietUntil = 0;
-        // 戦闘曲は層ごとに調を変える（同じ曲でも層が変わると色合いが変わる）
-        seq.shift = want === 'combat' && G ? [0, 2, -2, 3, 0][(G.depth - 1) % 5] : 0;
         seq.next = Math.max(now + 0.06, cur === null ? 0 : seq.next);
         const T = AUDIO_TRACKS[want];
         echoDelay.delayTime.setValueAtTime((60 / T.bpm / 4) * 3, now); // 付点8分の山びこ

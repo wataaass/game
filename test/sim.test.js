@@ -177,6 +177,14 @@ test('BGM: どの曲も全小節が16分音符16個ぶんで、音名と和音�
     for (const bar of T.bass) assert.equal(au_parseLine(bar).reduce((a, x) => a + x.len, 0), 16, `${name} ベース`);
     for (const bar of T.drums) { assert.equal(bar.length, 16, `${name} ドラム`); assert.match(bar, /^[ksh.]+$/); }
     assert.ok(T.bpm >= 60 && T.bpm <= 180);
+    assert.ok(['broken', 'stab', 'chip', 'octave', 'pad', 'none'].includes(T.arp), name);
+    if (T.arp === 'stab') assert.equal(T.mask.length, 16, name);
+  }
+  // 層ごとに探索曲と戦闘曲があり、テンポか音色か和音の鳴らし方が必ず違う
+  for (const kind of ['explore', 'combat']) {
+    const sig = [1, 2, 3, 4, 5].map(d => { const T = AUDIO_TRACKS[kind + (d === 1 ? '' : d)]; assert.ok(T, kind + d); return [T.bpm, T.wave, T.arp, T.lead[0]].join('|'); });
+    assert.equal(new Set(sig).size, 5, kind);
+    assert.equal(new Set(sig.map(x => x.split('|')[0])).size, 5, kind + ' のテンポ');
   }
   assert.equal(au_midi('A4'), 69);
   assert.equal(au_midi('C#5'), 73);
