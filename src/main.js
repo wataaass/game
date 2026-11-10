@@ -228,7 +228,7 @@ function boot() {
 
   // 動作確認用の窓口（自動テストがここから状態を読む）
   window.__lanternfall = {
-    state: S, renderer, newGame, hashState: () => hashState(S.G),
+    state: S, renderer, newGame, finish, hashState: () => hashState(S.G),
     // 描画を待たずに n ティック進める（条件 until を満たしたら止まる）
     skip(n, until) { for (let i = 0; i < n && S.mode === 'play'; i++) { if (!tick() || (until && until(S.G))) break; } return S.G.tick; },
   };
