@@ -1,706 +1,410 @@
-// すべて実行時に合成する音響エンジン。外部素材は使わない。
-const au_CHORDS = [
-  [50, 53, 57, 60, 64], // Dm9
-  [46, 50, 53, 57],     // Bbmaj7
-  [43, 46, 50, 53],     // Gm7
-  [45, 50, 52, 55],     // A7sus4
-];
-const au_WIN_CHORD = [50, 54, 57, 62, 66];
-// 声・レイヤーの段で失われた音量をバスでまとめて補う。
-const au_SFX_MAKEUP = 3.4;
-const au_MUSIC_MAKEUP = 44;
-// イベント種別ごとの最短間隔（秒）と声の寿命（秒）。
-const au_EVENT_GAP = {
-  shoot: 0.045, hit: 0.035, spark: 0.06, enemyShoot: 0.07, pickup: 0.04,
-  bounce: 0.03, chain: 0.05, dash: 0.08, heal: 0.1, torch: 0.1,
-};
-const au_EVENT_VOICE = {
-  shoot: 0.14, hit: 0.14, enemyDie: 0.34, bounce: 0.05, explode: 0.7,
-  chain: 0.12, spark: 0.05, playerHurt: 0.32, death: 1.9, dash: 0.2,
-  pickup: 0.22, levelUp: 0.52, upgrade: 0.7, roomStart: 2.0, roomClear: 0.8,
-  wave: 0.7, calm: 1.5, stairs: 0.8, descend: 0.85, chest: 1.5, shrine: 1.5,
-  torch: 0.5, spawn: 0.32, telegraph: 0.16, charge: 0.3, thud: 0.4,
-  fuse: 0.36, summon: 0.7, enemyShoot: 0.13, bossPhase: 1.0, bossDie: 2.4,
-  win: 2.3, heal: 0.4, darkHunt: 0.8,
+// 音はすべて Web Audio API で合成する（音声ファイルなし）。
+// BGM はファミコン風の4声（パルス波の主旋律・パルス波の和音・三角波のベース・ノイズのドラム）で、
+// 探索・戦闘・ボス・タイトルにそれぞれ曲を持ち、小節の頭で切り替える。
+// 効果音は「アタック（短い雑音や高い音）＋本体（音程のある音）＋余韻」を重ね、鳴らすたびに音程を少し揺らす。
+
+const au_NOTE = { C: 0, D: 2, E: 4, F: 5, G: 7, A: 9, B: 11 };
+// 'D5' 'Bb4' 'C#6' → MIDI 番号。'-' は休符。
+export function au_midi(name) {
+  if (name === '-') return -1;
+  const m = /^([A-G])([#b]?)(\d)$/.exec(name);
+  if (!m) throw new Error('bad note ' + name);
+  return au_NOTE[m[1]] + (m[2] === '#' ? 1 : m[2] === 'b' ? -1 : 0) + (Number(m[3]) + 1) * 12;
+}
+const au_hz = n => 440 * Math.pow(2, (n - 69) / 12);
+const au_CHORD = {
+  Dm: ['D', 'F', 'A'], Bb: ['Bb', 'D', 'F'], F: ['F', 'A', 'C'], C: ['C', 'E', 'G'], Gm: ['G', 'Bb', 'D'],
+  A: ['A', 'C#', 'E'], Eb: ['Eb', 'G', 'Bb'], Am: ['A', 'C', 'E'], D: ['D', 'F#', 'A'], G: ['G', 'B', 'D'],
 };
 
-function au_clamp(v, lo, hi) {
-  return v < lo ? lo : v > hi ? hi : v;
+// 曲データ。1小節 = 16分音符16個。lead は「音名:長さ」、drums は k=キック s=スネア h=ハット o=クラッシュ。
+// 全曲に同じ動機（レ→ラ→レ→ファ）を置いて、場面が変わっても同じゲームの曲に聞こえるようにする。
+export const AUDIO_TRACKS = {
+  explore: {
+    bpm: 96, duty: 0.25, leadVol: 0.17, arpVol: 0.065, bassVol: 0.38, drumVol: 0.5, arp: 'broken', echo: 0.3,
+    chords: ['Dm', 'Bb', 'F', 'C', 'Dm', 'Bb', 'Gm', 'A'],
+    lead: [
+      'D5:4 A4:2 D5:2 F5:6 E5:2', 'D5:4 Bb4:2 D5:2 F5:4 G5:4', 'A5:6 G5:2 F5:4 C5:4', 'E5:4 D5:2 C5:2 E5:8',
+      'D5:4 A4:2 D5:2 F5:6 E5:2', 'D5:4 F5:2 Bb5:2 A5:4 G5:4', 'G5:3 F5:3 D5:2 Bb4:4 D5:4', 'E5:6 C#5:2 A4:8',
+    ],
+    bass: ['1:6 1:2 5:4 1:4'],
+    drums: ['k...h...k.h.h...', 'k...h...k.h.h.h.'],
+  },
+  combat: {
+    bpm: 144, duty: 0.5, leadVol: 0.17, arpVol: 0.07, bassVol: 0.42, drumVol: 0.8, arp: 'stab', echo: 0.18,
+    chords: ['Dm', 'Dm', 'Bb', 'C', 'Dm', 'Dm', 'Bb', 'A'],
+    lead: [
+      'D5:2 D5:1 F5:1 A5:2 D5:2 F5:2 A5:2 G5:2 F5:2', 'E5:2 E5:1 F5:1 G5:2 E5:2 D5:4 A4:4',
+      'D5:2 D5:1 F5:1 Bb5:2 D5:2 F5:2 Bb5:2 A5:2 G5:2', 'E5:2 G5:2 C6:4 Bb5:2 G5:2 E5:4',
+      'D5:2 D5:1 F5:1 A5:2 D5:2 F5:2 A5:2 D6:4', 'C6:2 A5:2 G5:2 F5:2 E5:2 F5:2 G5:4',
+      'F5:3 G5:3 A5:2 Bb5:3 A5:3 G5:2', 'A5:4 G5:2 E5:2 C#5:4 E5:2 A5:2',
+    ],
+    bass: ['1:2 1:2 8:2 1:2 1:2 1:2 8:2 5:2'],
+    drums: ['k.h.s.h.k.k.s.h.', 'k.h.s.h.k.k.s.hh', 'k.h.s.h.k.k.s.h.', 'k.h.s.hkk.k.s.ss'],
+  },
+  boss: {
+    bpm: 160, duty: 0.25, leadVol: 0.17, arpVol: 0.07, bassVol: 0.44, drumVol: 0.85, arp: 'stab', echo: 0.15,
+    chords: ['Dm', 'Eb', 'Dm', 'A', 'Dm', 'Eb', 'F', 'A'],
+    lead: [
+      'D5:2 A5:2 Ab5:2 A5:2 D5:2 F5:2 Eb5:2 D5:2', 'Eb5:2 Bb5:2 A5:2 Bb5:2 Eb5:2 G5:2 F5:2 Eb5:2',
+      'D5:2 A5:2 Ab5:2 A5:2 D6:4 C6:2 Bb5:2', 'A5:2 C#6:2 E6:4 C#6:2 A5:2 E5:4',
+      'D6:3 C6:3 Bb5:2 A5:3 G5:3 F5:2', 'Eb5:3 G5:3 Bb5:2 Eb6:4 D6:4',
+      'C6:2 A5:2 F5:2 A5:2 C6:2 F6:2 E6:2 C6:2', 'C#6:2 A5:2 E5:2 A5:2 C#6:1 E6:1 A6:2 A5:4',
+    ],
+    bass: ['1:2 1:1 1:1 1:2 1:1 1:1 1:2 1:1 1:1 8:2 5:2'],
+    drums: ['k.hhs.hhk.khs.hh', 'k.hhs.hhkkhhs.ss', 'k.hhs.hhk.khs.hh', 'kkhhs.hkk.kss.ss'],
+  },
+  title: {
+    bpm: 80, duty: 0.125, leadVol: 0.11, arpVol: 0.045, bassVol: 0.24, drumVol: 0, arp: 'broken', echo: 0.4,
+    chords: ['Dm', 'Bb', 'F', 'C', 'Dm', 'Bb', 'Gm', 'A'],
+    lead: [
+      'D5:8 A4:4 D5:4', 'F5:12 E5:4', 'A5:8 G5:4 F5:4', 'E5:12 C5:4',
+      'D5:8 A4:4 D5:4', 'F5:8 Bb5:8', 'A5:6 G5:6 D5:4', 'E5:8 C#5:8',
+    ],
+    bass: ['1:8 5:8'],
+    drums: ['................'],
+  },
+};
+
+// 短い定型フレーズ（ジングル）。[音名, 開始(16分), 長さ(16分)]
+const au_JINGLE = {
+  win: { bpm: 132, notes: [['D5', 0, 2], ['F#5', 2, 2], ['A5', 4, 2], ['D6', 6, 4], ['B5', 10, 2], ['D6', 12, 2], ['F#6', 14, 2], ['A6', 16, 12]], chord: 'D' },
+  dead: { bpm: 84, notes: [['A4', 0, 3], ['F4', 3, 3], ['E4', 6, 2], ['D4', 8, 4], ['C#4', 12, 4], ['D4', 16, 12]], chord: 'Dm' },
+  clear: { bpm: 150, notes: [['D5', 0, 1], ['F#5', 1, 1], ['A5', 2, 1], ['D6', 3, 3], ['A5', 6, 1], ['D6', 7, 5]], chord: 'D' },
+};
+
+export function au_parseLine(line) {
+  return line.split(' ').map(tok => { const [n, l] = tok.split(':'); return { n, len: Number(l) }; });
 }
-function au_mtof(n) {
-  return 440 * Math.pow(2, (n - 69) / 12);
-}
-// 立ち上がり -> 指数減衰の短いエンベロープ。
-function au_env(param, t0, dur, peak, attack) {
-  const a = Math.min(Math.max(0.001, attack ?? 0.004), dur * 0.8);
-  param.setValueAtTime(0.0001, t0);
-  param.exponentialRampToValueAtTime(Math.max(0.0002, peak), t0 + a);
-  param.exponentialRampToValueAtTime(0.0001, t0 + dur);
-  param.setValueAtTime(0, t0 + dur + 0.01);
-}
-function au_padEnv(param, t0, dur, peak, attack) {
-  const a = Math.min(Math.max(0.1, attack), dur * 0.4);
-  const rel = Math.max(0.25, dur * 0.35);
-  param.setValueAtTime(0.0001, t0);
-  param.linearRampToValueAtTime(Math.max(0.0002, peak), t0 + a);
-  param.setValueAtTime(Math.max(0.0002, peak), t0 + dur - rel);
-  param.exponentialRampToValueAtTime(0.0001, t0 + dur);
-  param.setValueAtTime(0, t0 + dur + 0.02);
-}
-// 1 オシレーター + 任意のローパス + パン。停止時刻は必ず予約する。
-function au_tone(c, dest, o) {
-  const t0 = o.t ?? c.currentTime;
-  const dur = Math.max(0.03, o.dur ?? 0.1);
-  const pan = c.createStereoPanner();
-  pan.pan.value = au_clamp(o.pan ?? 0, -1, 1);
-  const gain = c.createGain();
-  gain.connect(pan);
-  pan.connect(dest);
-  let tail = gain;
-  if (o.lp) {
-    const f = c.createBiquadFilter();
-    f.type = 'lowpass';
-    f.frequency.setValueAtTime(Math.max(30, o.lp), t0);
-    f.Q.value = o.q ?? 0.7;
-    f.connect(gain);
-    tail = f;
-  }
-  const osc = c.createOscillator();
-  osc.type = o.type || 'triangle';
-  osc.frequency.setValueAtTime(Math.max(18, o.f0 ?? 440), t0);
-  if (o.f1 !== undefined) osc.frequency.exponentialRampToValueAtTime(Math.max(18, o.f1), t0 + dur);
-  if (o.detune) osc.detune.value = o.detune;
-  if (o.vib) {
-    const lfo = c.createOscillator();
-    const lg = c.createGain();
-    lfo.frequency.value = o.vibRate ?? 7;
-    lg.gain.value = o.vib;
-    lfo.connect(lg);
-    lg.connect(osc.frequency);
-    lfo.start(t0);
-    lfo.stop(t0 + dur + 0.04);
-  }
-  osc.connect(tail);
-  au_env(gain.gain, t0, dur, o.gain ?? 0.12, o.attack ?? 0.004);
-  osc.start(t0);
-  osc.stop(t0 + dur + 0.04);
-}
-// 共有ノイズバッファをフィルターへ通す短いバースト。
-function au_noise(c, buf, dest, o) {
-  if (!buf) return;
-  const t0 = o.t ?? c.currentTime;
-  const dur = Math.max(0.015, o.dur ?? 0.08);
-  const src = c.createBufferSource();
-  src.buffer = buf;
-  src.loop = dur > 1.8;
-  const filter = c.createBiquadFilter();
-  filter.type = o.type || 'lowpass';
-  filter.frequency.setValueAtTime(Math.max(40, o.f0 ?? 900), t0);
-  if (o.f1 !== undefined) filter.frequency.exponentialRampToValueAtTime(Math.max(40, o.f1), t0 + dur);
-  filter.Q.value = o.q ?? 0.8;
-  const pan = c.createStereoPanner();
-  pan.pan.value = au_clamp(o.pan ?? 0, -1, 1);
-  const gain = c.createGain();
-  src.connect(filter);
-  filter.connect(gain);
-  gain.connect(pan);
-  pan.connect(dest);
-  au_env(gain.gain, t0, dur, o.gain ?? 0.08, o.attack ?? 0.002);
-  const offset = src.loop ? 0 : Math.random() * Math.max(0, buf.duration - dur - 0.03);
-  src.start(t0, offset);
-  src.stop(t0 + dur + 0.04);
-}
+
+const au_GAP = { hit: 0.04, shoot: 0.05, enemyShoot: 0.07, pickup: 0.045, enemyDie: 0.04, bounce: 0.05, spawn: 0.08, telegraph: 0.1, explode: 0.06, chain: 0.05, torch: 0.1 };
 
 export function createAudio() {
-  let ac = null, master = null, masterLP = null, sfxBus = null, musicBus = null, musicDuck = null;
-  let noise = null, padGain = null, pluckGain = null, bassGain = null, drumGain = null, bossGain = null;
-  const vol = { master: 1, music: 0.8, sfx: 0.9 };
-  let muted = false, scene = 'title', active = [], padFilters = [];
-  let pickupCombo = 0, pickupLast = -10;
+  let ac = null, master = null, lowpass = null, sfx = null, music = null, duck = null, echoIn = null, echoDelay = null, noiseBuf = null;
+  const waves = {};
+  const vol = { master: 0.8, music: 0.6, sfx: 0.8 };
+  let muted = false, scene = 'title', voices = 0, combo = 0, comboT = -10;
   const last = Object.create(null);
-  let layerLast = { pad: 0, pluck: 0, bass: 0, drums: 0, boss: 0 };
-  const mus = {
-    next: 0, step: 0, bar: 0, tempo: 84, intensity: 0,
-    lcg: 0x1a2b3c4d, boss: false, lowOil: false, padCut: 720,
-  };
-  const TONE = o => au_tone(ac, sfxBus, o);
-  const NOISE = o => au_noise(ac, noise, sfxBus, o);
-  function au_applyVolumes() {
-    if (!ac) return;
-    const now = ac.currentTime;
-    master.gain.setTargetAtTime(muted ? 0 : vol.master, now, 0.04);
-    sfxBus.gain.setTargetAtTime(vol.sfx * au_SFX_MAKEUP, now, 0.03);
-    if (scene !== 'dead') {
-      musicBus.gain.cancelScheduledValues(now);
-      musicBus.gain.setTargetAtTime(vol.music, now, 0.08);
-    }
-  }
-  function au_fadeMusic(seconds) {
-    if (!ac) return;
-    const now = ac.currentTime;
-    const g = musicBus.gain;
-    g.cancelScheduledValues(now);
-    g.setValueAtTime(Math.max(0.0001, g.value), now);
-    g.linearRampToValueAtTime(0.0001, now + seconds);
-  }
-  function au_duckMusic(level, hold) {
-    if (!ac) return;
-    const now = ac.currentTime;
-    const g = musicDuck.gain;
-    g.cancelScheduledValues(now);
-    g.setTargetAtTime(level, now, 0.02);
-    g.setTargetAtTime(1, now + hold, 0.28);
-  }
-  function au_buildGraph() {
-    master = ac.createGain();
-    master.gain.value = vol.master;
-    masterLP = ac.createBiquadFilter();
-    masterLP.type = 'lowpass';
-    masterLP.frequency.value = 18000;
-    masterLP.Q.value = 0.7;
-    const comp = ac.createDynamicsCompressor();
-    comp.threshold.value = -16; comp.knee.value = 12;
-    comp.ratio.value = 8; comp.attack.value = 0.002; comp.release.value = 0.2;
-    master.connect(masterLP);
-    masterLP.connect(comp);
-    comp.connect(ac.destination);
-    sfxBus = ac.createGain();
-    sfxBus.gain.value = vol.sfx * au_SFX_MAKEUP;
-    sfxBus.connect(master);
-    musicBus = ac.createGain(); musicBus.gain.value = vol.music;
-    musicDuck = ac.createGain(); musicDuck.gain.value = 1;
-    musicBus.connect(musicDuck);
-    musicDuck.connect(master);
-    // 洞窟のような短いフィードバック残響。sfx だけを薄く送る。
-    const roomIn = ac.createGain();
-    const dA = ac.createDelay(0.3);
-    const dB = ac.createDelay(0.3);
-    const roomLP = ac.createBiquadFilter();
-    const fb = ac.createGain();
-    roomIn.gain.value = 0.18;
-    dA.delayTime.value = 0.11;
-    dB.delayTime.value = 0.17;
-    roomLP.type = 'lowpass';
-    roomLP.frequency.value = 1600;
-    fb.gain.value = 0.25;
-    sfxBus.connect(roomIn);
-    roomIn.connect(dA);
-    roomIn.connect(dB);
-    dA.connect(roomLP);
-    dB.connect(roomLP);
-    roomLP.connect(fb);
-    fb.connect(dA);
-    fb.connect(dB);
-    roomLP.connect(master);
-    const layer = () => {
-      const g = ac.createGain();
-      g.gain.value = 0;
-      g.connect(musicBus);
-      return g;
-    };
-    padGain = layer(); pluckGain = layer(); bassGain = layer();
-    drumGain = layer(); bossGain = layer();
-    const len = Math.floor(ac.sampleRate * 2);
-    noise = ac.createBuffer(1, len, ac.sampleRate);
-    const data = noise.getChannelData(0);
-    for (let i = 0; i < len; i++) data[i] = Math.random() * 2 - 1;
-  }
+  // seq: いま鳴っている曲と、小節の頭で切り替える予定の曲
+  const seq = { track: null, want: 'title', next: 0, step: 0, quietUntil: 0 };
+
   function unlock() {
-    if (ac) {
-      if (ac.state === 'suspended') {
-        try {
-          const p = ac.resume();
-          if (p && p.catch) p.catch(() => {});
-        } catch {}
-      }
-      return;
-    }
-    const AC = globalThis.AudioContext || globalThis.webkitAudioContext;
+    const AC = typeof AudioContext !== 'undefined' ? AudioContext : typeof webkitAudioContext !== 'undefined' ? webkitAudioContext : null;
     if (!AC) return;
     try {
+      if (ac) { if (ac.state === 'suspended') ac.resume(); return; }
       ac = new AC();
-      au_buildGraph();
-    } catch {
-      ac = null;
-      return;
-    }
-    au_applyVolumes();
-    au_setScene(scene);
-    if (ac.state === 'suspended') {
-      try {
-        const p = ac.resume();
-        if (p && p.catch) p.catch(() => {});
-      } catch {}
-    }
-  }
-  function setVolumes(v) {
-    if (!v || typeof v !== 'object') return;
-    if (Number.isFinite(v.master)) vol.master = au_clamp(v.master, 0, 1);
-    if (Number.isFinite(v.music)) vol.music = au_clamp(v.music, 0, 1);
-    if (Number.isFinite(v.sfx)) vol.sfx = au_clamp(v.sfx, 0, 1);
-    if (ac) au_applyVolumes();
-  }
-  function setMuted(v) {
-    muted = !!v;
-    if (ac) au_applyVolumes();
-  }
-  function au_setScene(name) {
-    if (!ac) return;
-    const now = ac.currentTime;
-    masterLP.frequency.cancelScheduledValues(now);
-    masterLP.frequency.setTargetAtTime(name === 'paused' ? 360 : 18000, now, 0.12);
-    if (name === 'dead') au_fadeMusic(2);
-    else {
-      musicBus.gain.cancelScheduledValues(now);
-      musicBus.gain.setTargetAtTime(vol.music, now, 0.15);
-      au_applyVolumes();
-    }
-    if (name === 'win') {
-      mus.next = 0;
-      mus.step = 0;
-    }
-  }
-  function setScene(name) {
-    if (name !== 'title' && name !== 'game' && name !== 'paused' && name !== 'dead' && name !== 'win') return;
-    // 場面が変わったら小節の頭からやり直す（次の小節まで音楽が途切れるのを防ぐ）。ポーズの出入りでは続きから。
-    if (name !== scene && name !== 'paused' && scene !== 'paused') { mus.step = 0; mus.next = 0; }
-    scene = name;
-    au_setScene(name);
-  }
-  function au_place(ev, G) {
-    if (!G || !G.player || !Number.isFinite(ev.x) || !Number.isFinite(ev.y)) return { pan: 0, att: 1 };
-    const dx = ev.x - G.player.x;
-    const dy = ev.y - G.player.y;
-    const dist = Math.hypot(dx, dy);
-    return { pan: au_clamp(dx / 10, -1, 1), att: 1 / (1 + (dist / 9) * (dist / 9)) };
-  }
-  function au_voiceOK(dur, now) {
-    let w = 0;
-    for (let i = 0; i < active.length; i++) if (active[i] > now) active[w++] = active[i];
-    active.length = w;
-    if (w >= 24) return false;
-    active.push(now + dur);
-    return true;
-  }
-  function onEvents(events, G) {
-    if (!ac || ac.state !== 'running' || !Array.isArray(events) || !events.length) return;
-    try {
-      const now = ac.currentTime + 0.004;
-      for (const ev of events) {
-        if (!ev || typeof ev.type !== 'string') continue;
-        const dur = au_EVENT_VOICE[ev.type];
-        if (!dur) continue;
-        if (now - (last[ev.type] ?? -99) < (au_EVENT_GAP[ev.type] || 0)) continue;
-        if (!au_voiceOK(dur, now)) continue;
-        last[ev.type] = now;
-        const place = au_place(ev, G);
-        au_playEvent(ev, place.pan, place.att, now);
+      const comp = ac.createDynamicsCompressor();
+      comp.threshold.value = -10; comp.knee.value = 8; comp.ratio.value = 12; comp.attack.value = 0.003; comp.release.value = 0.15;
+      lowpass = ac.createBiquadFilter(); lowpass.type = 'lowpass'; lowpass.frequency.value = 20000;
+      master = ac.createGain(); master.gain.value = muted ? 0 : vol.master;
+      master.connect(lowpass); lowpass.connect(comp); comp.connect(ac.destination);
+      sfx = ac.createGain(); sfx.gain.value = vol.sfx; sfx.connect(master);
+      music = ac.createGain(); music.gain.value = vol.music;
+      duck = ac.createGain(); duck.gain.value = 1;
+      // パルス波の高い倍音は耳に刺さるので、BGM 全体を少し丸める
+      const soften = ac.createBiquadFilter(); soften.type = 'lowpass'; soften.frequency.value = 7000; soften.Q.value = 0.5;
+      music.connect(duck); duck.connect(soften); soften.connect(master);
+      // 主旋律だけにかける山びこ（残響の代わり。チップチューンの定番）
+      echoIn = ac.createGain(); echoIn.gain.value = 0.3;
+      echoDelay = ac.createDelay(1); echoDelay.delayTime.value = 0.3;
+      const fb = ac.createGain(); fb.gain.value = 0.3;
+      echoIn.connect(echoDelay); echoDelay.connect(fb); fb.connect(echoDelay); echoDelay.connect(music);
+      noiseBuf = ac.createBuffer(1, ac.sampleRate, ac.sampleRate);
+      const d = noiseBuf.getChannelData(0);
+      let s = 12345;
+      for (let i = 0; i < d.length; i++) { s = (Math.imul(s, 1103515245) + 12345) | 0; d[i] = (s >> 16) / 32768; }
+      // デューティ比つきのパルス波（倍音を 48 本で打ち切って、高音の折り返し雑音を防ぐ）
+      for (const duty of [0.125, 0.25, 0.5]) {
+        const re = new Float32Array(49), im = new Float32Array(49);
+        for (let n = 1; n < 49; n++) re[n] = (2 / (n * Math.PI)) * Math.sin(n * Math.PI * duty);
+        waves[duty] = ac.createPeriodicWave(re, im);
       }
-    } catch {}
+      if (ac.state === 'suspended') ac.resume();
+    } catch { ac = null; }
+  }
+  const ready = () => !!ac && ac.state === 'running';
+
+  function setVolumes(v) {
+    if (!v) return;
+    for (const k of ['master', 'music', 'sfx']) if (Number.isFinite(v[k])) vol[k] = Math.min(1, Math.max(0, v[k]));
+    if (!ac) return;
+    const t = ac.currentTime;
+    master.gain.setTargetAtTime(muted ? 0 : vol.master, t, 0.03);
+    music.gain.setTargetAtTime(vol.music, t, 0.05); sfx.gain.setTargetAtTime(vol.sfx, t, 0.03);
+  }
+  function setMuted(m) { muted = !!m; if (ac) master.gain.setTargetAtTime(muted ? 0 : vol.master, ac.currentTime, 0.03); }
+
+  // ---------------------------------------------------------------- 音の部品
+  // 音程のある1音。o: { wave: 0.125|0.25|0.5|'triangle'|'square'|'sawtooth'|'sine', f0, f1, dur, vol, t, attack, steps, vib, pan }
+  function tone(dest, o) {
+    const t = o.t ?? ac.currentTime, dur = o.dur, osc = ac.createOscillator(), g = ac.createGain();
+    if (typeof o.wave === 'number') osc.setPeriodicWave(waves[o.wave]); else osc.type = o.wave || 'square';
+    osc.frequency.setValueAtTime(o.f0, t);
+    if (o.steps) o.steps.forEach((f, i) => osc.frequency.setValueAtTime(f, t + i * o.stepDur)); // 高速アルペジオ
+    else if (o.f1 && o.f1 !== o.f0) osc.frequency.exponentialRampToValueAtTime(Math.max(20, o.f1), t + dur);
+    if (o.vib && dur > 0.28) {
+      const lfo = ac.createOscillator(), lg = ac.createGain();
+      lfo.frequency.value = 5.5; lg.gain.setValueAtTime(0, t); lg.gain.setValueAtTime(0, t + 0.16);
+      lg.gain.linearRampToValueAtTime(o.f0 * 0.012, t + 0.3);
+      lfo.connect(lg); lg.connect(osc.frequency); lfo.start(t); lfo.stop(t + dur + 0.05);
+    }
+    const a = o.attack ?? 0.003, v = o.vol;
+    g.gain.setValueAtTime(0, t);
+    g.gain.linearRampToValueAtTime(v, t + a);
+    if (o.sustain !== undefined) { // 持続音: 少し減衰してから保ち、最後にすばやく切る
+      g.gain.exponentialRampToValueAtTime(Math.max(0.0005, v * o.sustain), t + Math.min(dur * 0.5, 0.09));
+      g.gain.setValueAtTime(Math.max(0.0005, v * o.sustain), t + Math.max(a + 0.001, dur - 0.02));
+      g.gain.linearRampToValueAtTime(0, t + dur);
+    } else g.gain.exponentialRampToValueAtTime(0.0005, t + dur);
+    osc.connect(g);
+    let out = g;
+    if (o.pan) { const p = ac.createStereoPanner(); p.pan.value = o.pan; g.connect(p); out = p; }
+    out.connect(dest);
+    if (o.echo) out.connect(echoIn);
+    osc.start(t); osc.stop(t + dur + 0.03);
+    return osc;
+  }
+  // 雑音の1音。o: { type: 'lowpass'|'highpass'|'bandpass', f0, f1, q, dur, vol, t, attack, pan }
+  function noise(dest, o) {
+    const t = o.t ?? ac.currentTime, src = ac.createBufferSource(), f = ac.createBiquadFilter(), g = ac.createGain();
+    src.buffer = noiseBuf; src.loop = true;
+    f.type = o.type || 'lowpass'; f.Q.value = o.q ?? 0.8;
+    f.frequency.setValueAtTime(o.f0, t);
+    if (o.f1) f.frequency.exponentialRampToValueAtTime(o.f1, t + o.dur);
+    g.gain.setValueAtTime(0, t);
+    g.gain.linearRampToValueAtTime(o.vol, t + (o.attack ?? 0.002));
+    g.gain.exponentialRampToValueAtTime(0.0005, t + o.dur);
+    src.connect(f); f.connect(g);
+    let out = g;
+    if (o.pan) { const p = ac.createStereoPanner(); p.pan.value = o.pan; g.connect(p); out = p; }
+    out.connect(dest);
+    src.start(t, (t * 7.13) % 0.9); src.stop(t + o.dur + 0.03);
+  }
+  // 効果音が鳴る間だけ BGM を下げる
+  function duckMusic(level, hold) {
+    const t = ac.currentTime;
+    duck.gain.cancelScheduledValues(t);
+    duck.gain.setTargetAtTime(level, t, 0.015);
+    duck.gain.setTargetAtTime(1, t + hold, 0.2);
+  }
+  function arpRun(names, step, o = {}) { // 音名の列を順に鳴らす短いフレーズ
+    names.forEach((n, i) => tone(sfx, {
+      wave: o.wave ?? 0.25, f0: au_hz(au_midi(n)), dur: i === names.length - 1 ? (o.last ?? step * 3) : step * 1.1, vol: o.vol ?? 0.2,
+      t: ac.currentTime + i * step + (o.delay ?? 0), pan: o.pan, sustain: i === names.length - 1 ? 0.6 : undefined,
+    }));
   }
 
-  function au_playEvent(ev, pan, att, t) {
-    const a = ev.a, b = ev.b;
-    switch (ev.type) {
-      case 'shoot': return au_sndShoot(b, pan, att, t);
-      case 'hit': return au_sndHit(b, pan, att, t);
-      case 'enemyDie': return au_sndEnemyDie(a, b, pan, att, t);
-      case 'bounce': return au_sndTick(pan, att, t, 1900, 0.018);
-      case 'explode': return au_sndExplode(a, pan, att, t);
-      case 'chain': return au_sndChain(pan, att, t);
-      case 'spark': return au_sndTick(pan, att, t, 2600, a === 1 ? 0.006 : 0.014);
-      case 'playerHurt': return au_sndPlayerHurt(pan, att, t);
-      case 'death': return au_sndDeath(pan, att, t);
-      case 'dash': return au_sndDash(pan, att, t);
-      case 'pickup': return au_sndPickup(a, pan, att, t);
-      case 'levelUp': return au_sndLevelUp(pan, att, t);
-      case 'upgrade': return au_sndUpgrade(pan, att, t);
-      case 'roomStart': return au_sndRoomStart(a, pan, att, t);
-      case 'roomClear': return au_sndRoomClear(pan, att, t);
-      case 'wave': return au_sndWave(pan, att, t);
-      case 'calm': return au_sndBell(392, pan, att, t, 1.4);
-      case 'stairs': return au_sndStairs(pan, att, t);
-      case 'descend': return au_sndDescend(pan, att, t);
-      case 'chest': return au_sndBell(523.25, pan, att, t, 1.5);
-      case 'shrine': return au_sndBell(440, pan, att, t, 1.5);
-      case 'torch': return au_sndTorch(pan, att, t);
-      case 'spawn': return au_sndSpawn(pan, att, t);
-      case 'telegraph': return au_sndTelegraph(pan, att, t);
-      case 'charge': return au_sndCharge(pan, att, t);
-      case 'thud': return au_sndThud(a, pan, att, t);
-      case 'fuse': return au_sndFuse(pan, att, t);
-      case 'summon': return au_sndSummon(pan, att, t);
-      case 'enemyShoot': return au_sndEnemyShoot(pan, att, t);
-      case 'bossPhase': return au_sndBossPhase(a, pan, att, t);
-      case 'bossDie': return au_sndBossDie(pan, att, t);
-      case 'win': return au_sndWin(pan, att, t);
-      case 'heal': return au_sndHeal(pan, att, t);
-      case 'darkHunt': return au_sndDarkHunt(pan, att, t);
-      default: return;
-    }
-  }
-  function au_sndShoot(big, pan, att, t) {
-    const f = (big === 1 ? 560 : 880) * (1 + (Math.random() * 0.08 - 0.04));
-    TONE({ type: 'triangle', f0: f, f1: big === 1 ? 210 : 430, dur: big === 1 ? 0.12 : 0.06,
-      gain: (big === 1 ? 0.12 : 0.075) * att, attack: 0.002, pan, t });
-    NOISE({ type: 'highpass', f0: big === 1 ? 1400 : 2600, dur: 0.025,
-      gain: (big === 1 ? 0.035 : 0.018) * att, attack: 0.001, pan, t });
-  }
-  function au_sndHit(b, pan, att, t) {
-    NOISE({ type: 'lowpass', f0: 430, f1: 120, dur: 0.05, gain: 0.1 * att, attack: 0.001, pan, t });
-    if (b === 1) TONE({ type: 'sine', f0: 1800, f1: 1500, dur: 0.09, gain: 0.045 * att, attack: 0.002, pan, t });
-    else if (b === 2) NOISE({ type: 'highpass', f0: 3200, dur: 0.05, gain: 0.012 * att, attack: 0.001, pan, t });
-  }
-  function au_sndEnemyDie(type, r, pan, att, t) {
-    if (type === 'urn') {
-      NOISE({ type: 'bandpass', f0: 3000, f1: 2200, dur: 0.08, gain: 0.12 * att, q: 2.2, attack: 0.001, pan, t });
-      TONE({ type: 'triangle', f0: 2400, f1: 1700, dur: 0.06, gain: 0.03 * att, attack: 0.001, pan, t });
-      return;
-    }
-    const m = 1 / (1 + au_clamp(r ?? 0.35, 0.15, 2.5) * 0.9);
-    TONE({ type: 'square', f0: 320 * m, f1: Math.max(30, 60 * m), dur: 0.18,
-      gain: 0.055 * att, attack: 0.003, pan, t });
-    NOISE({ type: 'lowpass', f0: 900, f1: 180, dur: 0.2, gain: 0.055 * att, attack: 0.002, pan, t });
-  }
-  function au_sndTick(pan, att, t, freq, gain) {
-    TONE({ type: 'sine', f0: freq, f1: freq * 0.8, dur: 0.028, gain: gain * att, attack: 0.001, pan, t });
-  }
-  function au_sndExplode(r, pan, att, t) {
-    const k = 0.6 + Math.min(1.4, au_clamp(r ?? 1, 0.5, 4) * 0.35);
-    TONE({ type: 'sine', f0: 120, f1: 35, dur: 0.4, gain: 0.11 * k * att, attack: 0.004, pan, t });
-    NOISE({ type: 'lowpass', f0: 700, f1: 90, dur: 0.35, gain: 0.09 * k * att, attack: 0.005, pan, t });
-  }
-  function au_sndChain(pan, att, t) {
-    const osc = ac.createOscillator(), mod = ac.createOscillator();
-    const mg = ac.createGain(), gain = ac.createGain(), panner = ac.createStereoPanner();
-    panner.pan.value = au_clamp(pan, -1, 1);
-    osc.type = 'sawtooth';
-    osc.frequency.setValueAtTime(1200, t);
-    osc.frequency.exponentialRampToValueAtTime(300, t + 0.07);
-    mod.frequency.value = 155;
-    mg.gain.value = 380;
-    mod.connect(mg);
-    mg.connect(osc.frequency);
-    osc.connect(gain);
-    gain.connect(panner);
-    panner.connect(sfxBus);
-    au_env(gain.gain, t, 0.07, 0.055 * att, 0.002);
-    osc.start(t); mod.start(t);
-    osc.stop(t + 0.11); mod.stop(t + 0.11);
-  }
-  function au_sndPlayerHurt(pan, att, t) {
-    TONE({ type: 'square', f0: 140, f1: 90, dur: 0.2, gain: 0.09 * att, attack: 0.002, pan, t });
-    NOISE({ type: 'lowpass', f0: 520, f1: 180, dur: 0.2, gain: 0.075 * att, attack: 0.002, pan, t });
-    au_duckMusic(0.3, 0.24);
-  }
-  function au_sndDeath(pan, att, t) {
-    TONE({ type: 'sine', f0: 220, f1: 40, dur: 1.6, gain: 0.1 * att, attack: 0.02, pan, t });
-    NOISE({ type: 'lowpass', f0: 800, f1: 90, dur: 1.5, gain: 0.05 * att, attack: 0.03, pan, t });
-    au_fadeMusic(2);
-  }
-  function au_sndDash(pan, att, t) {
-    NOISE({ type: 'bandpass', f0: 600, f1: 2400, dur: 0.16, gain: 0.055 * att, q: 1.2, attack: 0.01, pan, t });
-  }
-  function au_sndPickup(kind, pan, att, t) {
-    kind = kind || 'xp';
-    if (kind === 'xp') {
-      const now = ac.currentTime;
-      pickupCombo = now - pickupLast > 0.6 ? 0 : Math.min(12, pickupCombo + 1);
-      pickupLast = now;
-      const f = 660 * Math.pow(2, pickupCombo / 12);
-      TONE({ type: 'sine', f0: f, f1: f * 1.01, dur: 0.1, gain: 0.042 * att, attack: 0.003, pan, t });
-    } else if (kind === 'oil') {
-      TONE({ type: 'sine', f0: 340, f1: 430, dur: 0.08, gain: 0.038 * att, attack: 0.004, pan, t });
-      TONE({ type: 'sine', f0: 430, f1: 540, dur: 0.09, gain: 0.032 * att, attack: 0.004, pan, t: t + 0.075 });
-    } else if (kind === 'heart') {
-      TONE({ type: 'sine', f0: 523.25, dur: 0.34, gain: 0.04 * att, attack: 0.008, pan, t });
-      TONE({ type: 'sine', f0: 659.25, dur: 0.34, gain: 0.033 * att, attack: 0.008, pan, t });
-    }
-  }
-  function au_sndLevelUp(pan, att, t) {
-    const notes = [62, 66, 69, 74];
-    for (let i = 0; i < notes.length; i++) {
-      TONE({ type: 'triangle', f0: au_mtof(notes[i]), dur: 0.3, gain: 0.045 * att, attack: 0.004,
-        pan, t: t + i * 0.07 });
-    }
-  }
-  function au_sndUpgrade(pan, att, t) {
-    for (const n of [62, 66, 69, 74]) {
-      TONE({ type: 'triangle', f0: au_mtof(n), dur: 0.55, gain: 0.024 * att, attack: 0.01, pan, t });
-    }
-  }
-  function au_sndRoomStart(boss, pan, att, t) {
-    NOISE({ type: 'lowpass', f0: 420, f1: 70, dur: 0.34, gain: 0.12 * att, attack: 0.002, pan, t });
-    TONE({ type: 'sine', f0: 75, f1: 42, dur: 0.32, gain: 0.09 * att, attack: 0.002, pan, t });
-    if (boss === 1) {
-      TONE({ type: 'sawtooth', f0: 46, f1: 44, dur: 1.7, gain: 0.027 * att, attack: 0.8, lp: 170, pan, t });
-      TONE({ type: 'sawtooth', f0: 49, f1: 47, dur: 1.7, gain: 0.023 * att, attack: 0.9, lp: 180, pan, t });
-    }
-  }
-  function au_sndRoomClear(pan, att, t) {
-    for (const n of [60, 64, 67]) {
-      TONE({ type: 'triangle', f0: au_mtof(n), dur: 0.26, gain: 0.032 * att, attack: 0.004, pan, t });
-    }
-    for (const n of [62, 66, 69, 74]) {
-      TONE({ type: 'triangle', f0: au_mtof(n), dur: 0.5, gain: 0.03 * att, attack: 0.006, pan, t: t + 0.2 });
-    }
-  }
-  function au_sndWave(pan, att, t) {
-    TONE({ type: 'sawtooth', f0: 110, f1: 116, dur: 0.52, gain: 0.05 * att, attack: 0.13, lp: 620, pan, t });
-    TONE({ type: 'sawtooth', f0: 164.81, f1: 174, dur: 0.48, gain: 0.025 * att, attack: 0.15, lp: 750, pan, t });
-  }
-  function au_sndBell(base, pan, att, t, decay) {
-    TONE({ type: 'sine', f0: base, dur: decay, gain: 0.042 * att, attack: 0.006, pan, t });
-    TONE({ type: 'sine', f0: base * 2.76, dur: decay * 0.6, gain: 0.015 * att, attack: 0.004, pan, t });
-    TONE({ type: 'sine', f0: base * 5.4, dur: decay * 0.35, gain: 0.006 * att, attack: 0.003, pan, t });
-  }
-  function au_sndStairs(pan, att, t) {
-    const notes = [74, 78, 81, 86];
-    for (let i = 0; i < notes.length; i++) {
-      TONE({ type: 'sine', f0: au_mtof(notes[i]), dur: 0.32, gain: 0.027 * att, attack: 0.006,
-        pan, t: t + i * 0.065 });
-    }
-  }
-  function au_sndDescend(pan, att, t) {
-    NOISE({ type: 'bandpass', f0: 2200, f1: 160, dur: 0.55, gain: 0.06 * att, q: 1.1, attack: 0.01, pan, t });
-    TONE({ type: 'sine', f0: 90, f1: 30, dur: 0.45, gain: 0.075 * att, attack: 0.005, pan, t });
-  }
-  function au_sndTorch(pan, att, t) {
-    NOISE({ type: 'lowpass', f0: 220, f1: 1400, dur: 0.35, gain: 0.055 * att, q: 0.9, attack: 0.08, pan, t });
-    TONE({ type: 'sine', f0: 85, f1: 145, dur: 0.28, gain: 0.03 * att, attack: 0.05, pan, t });
-  }
-  function au_sndSpawn(pan, att, t) {
-    NOISE({ type: 'bandpass', f0: 250, f1: 1600, dur: 0.16, gain: 0.05 * att, q: 1.4, attack: 0.12, pan, t });
-    TONE({ type: 'sine', f0: 180, f1: 520, dur: 0.17, gain: 0.034 * att, attack: 0.12, pan, t });
-  }
-  function au_sndTelegraph(pan, att, t) {
-    TONE({ type: 'square', f0: 1000, f1: 960, dur: 0.09, gain: 0.038 * att, attack: 0.002, pan, t });
-  }
-  function au_sndCharge(pan, att, t) {
-    TONE({ type: 'sawtooth', f0: 80, f1: 200, dur: 0.25, gain: 0.05 * att, attack: 0.02, lp: 700, pan, t });
-    NOISE({ type: 'bandpass', f0: 300, f1: 850, dur: 0.22, gain: 0.022 * att, q: 1.5, attack: 0.02, pan, t });
-  }
-  function au_sndThud(a, pan, att, t) {
-    const k = 0.6 + au_clamp(a ?? 0.5, 0, 1) * 0.6;
-    TONE({ type: 'sine', f0: 90, f1: 30, dur: 0.26, gain: 0.09 * k * att, attack: 0.002, pan, t });
-    NOISE({ type: 'lowpass', f0: 320, f1: 80, dur: 0.2, gain: 0.06 * k * att, attack: 0.002, pan, t });
-  }
-  function au_sndFuse(pan, att, t) {
-    for (let i = 0; i < 4; i++) {
-      NOISE({ type: 'highpass', f0: 3200, dur: 0.018, gain: 0.025 * att, attack: 0.001, pan, t: t + i * 0.07 });
-    }
-  }
-  function au_sndSummon(pan, att, t) {
-    TONE({ type: 'sine', f0: 820, f1: 210, dur: 0.62, gain: 0.028 * att, attack: 0.02, vib: 65, vibRate: 13, pan, t });
-    TONE({ type: 'sine', f0: 760, f1: 190, dur: 0.62, gain: 0.021 * att, attack: 0.02, vib: 55, vibRate: 11,
-      detune: 7, pan, t });
-  }
-  function au_sndEnemyShoot(pan, att, t) {
-    TONE({ type: 'triangle', f0: 300, f1: 150, dur: 0.09, gain: 0.045 * att, attack: 0.003, lp: 900, pan, t });
-  }
-  function au_sndBossPhase(phase, pan, att, t) {
-    const f = 146.83 * (phase === 3 ? 0.94 : 1);
-    const notes = [f, f * 1.06, f * 0.5, f * 1.5];
-    for (let i = 0; i < notes.length; i++) {
-      TONE({ type: 'sawtooth', f0: notes[i], f1: notes[i] * 0.995, dur: 0.9, gain: 0.024 * att,
-        attack: 0.02, detune: i % 2 ? 7 : -7, lp: 950, pan, t });
-    }
-    NOISE({ type: 'lowpass', f0: 500, f1: 120, dur: 0.35, gain: 0.045 * att, attack: 0.003, pan, t });
-  }
-  function au_sndBossDie(pan, att, t) {
-    NOISE({ type: 'lowpass', f0: 1200, f1: 180, dur: 2, gain: 0.075 * att, attack: 0.25, pan, t });
-    const notes = [38, 50, 54, 57, 62, 66];
-    for (let i = 0; i < notes.length; i++) {
-      TONE({ type: 'triangle', f0: au_mtof(notes[i]), dur: 1.2, gain: 0.028 * att, attack: 0.05,
-        pan, t: t + i * 0.18 });
-    }
-  }
-  function au_sndWin(pan, att, t) {
-    const notes = [50, 54, 57, 62, 66, 69];
-    for (let i = 0; i < notes.length; i++) {
-      TONE({ type: 'triangle', f0: au_mtof(notes[i]), dur: 0.72, gain: 0.035 * att, attack: 0.01,
-        pan, t: t + i * 0.16 });
-    }
-  }
-  function au_sndHeal(pan, att, t) {
-    TONE({ type: 'sine', f0: 523.25, f1: 587.33, dur: 0.16, gain: 0.036 * att, attack: 0.008, pan, t });
-    TONE({ type: 'sine', f0: 659.25, f1: 783.99, dur: 0.18, gain: 0.03 * att, attack: 0.008, pan, t: t + 0.09 });
-  }
-  function au_sndDarkHunt(pan, att, t) {
-    NOISE({ type: 'bandpass', f0: 650, f1: 1200, dur: 0.75, gain: 0.017 * att, q: 2.2, attack: 0.2, pan, t });
-    NOISE({ type: 'bandpass', f0: 1500, f1: 900, dur: 0.55, gain: 0.009 * att, q: 3, attack: 0.16,
-      pan, t: t + 0.12 });
-  }
-  function au_hasBoss(G) {
-    if (!G || !Array.isArray(G.enemies)) return false;
-    for (const e of G.enemies) if (e && !e.dead && e.type === 'unlit') return true;
-    return false;
-  }
-  function au_targetIntensity(G) {
-    if (scene === 'title') return 0.12;
-    if (scene === 'dead') return 0;
-    if (scene === 'win') return 0.4;
-    if (!G) return 0.15;
-    let target = G.activeRoom >= 0 ? 0.75 : 0.15;
-    if (au_hasBoss(G)) target = 1;
-    if (G.player && G.player.hp <= 2) target += 0.15;
-    return au_clamp(target, 0, 1);
-  }
-  function au_mixMusic() {
-    if (!ac) return;
-    const i = mus.intensity;
-    let pad = 0, pluck = 0, bass = 0, drums = 0, boss = 0;
-    if (scene === 'title') pad = 0.125;
-    else if (scene === 'win') pad = 0.38;
-    else if (scene !== 'dead') {
-      pad = 0.115 + 0.1 * i;
-      if (i > 0.25) pluck = 0.15 * Math.min(1, (i - 0.25) / 0.55);
-      if (i > 0.4) bass = 0.14 * Math.min(1, (i - 0.4) / 0.45);
-      if (i > 0.55) drums = 0.16 * Math.min(1, (i - 0.55) / 0.35);
-      if (mus.boss && i > 0.5) boss = 0.1 * Math.min(1, (i - 0.5) / 0.4);
-    }
-    const nodes = { pad: padGain, pluck: pluckGain, bass: bassGain, drums: drumGain, boss: bossGain };
-    const targets = { pad: pad * au_MUSIC_MAKEUP, pluck: pluck * au_MUSIC_MAKEUP, bass: bass * au_MUSIC_MAKEUP,
-      drums: drums * au_MUSIC_MAKEUP, boss: boss * au_MUSIC_MAKEUP };
-    const now = ac.currentTime;
-    for (const k of Object.keys(targets)) {
-      if (Math.abs(targets[k] - layerLast[k]) < 0.006) continue;
-      nodes[k].gain.setTargetAtTime(targets[k], now, 0.5);
-      layerLast[k] = targets[k];
-    }
-  }
-  function au_updatePadDark() {
-    const cut = mus.lowOil ? 330 : 720;
-    if (Math.abs(cut - mus.padCut) < 1) return;
-    mus.padCut = cut;
-    if (!ac) return;
-    padFilters = padFilters.filter(x => x.end > ac.currentTime);
-    for (const x of padFilters) x.f.frequency.setTargetAtTime(cut, ac.currentTime, 0.6);
-  }
-  function au_scheduleMusic() {
-    if (!ac || ac.state !== 'running') return;
-    if (scene === 'dead') {
-      mus.next = 0;
-      return;
-    }
-    const now = ac.currentTime;
-    if (!mus.next || mus.next < now - 0.3) mus.next = now + 0.05;
-    let guard = 0;
-    while (mus.next < now + 0.12 && guard++ < 20) {
-      if (mus.step === 0) {
-        mus.bar++;
-        mus.tempo = mus.boss ? 96 : 84;
-        au_schedulePad(mus.next, mus.tempo);
+  // ---------------------------------------------------------------- 効果音
+  const FX = {
+    shoot(e, k) {
+      const r = 1 + (Math.random() - 0.5) * 0.08;
+      if (e.b) { tone(sfx, { wave: 0.25, f0: 760 * r, f1: 190, dur: 0.11, vol: 0.2 * k.g, pan: k.pan }); noise(sfx, { type: 'bandpass', f0: 2400, f1: 500, dur: 0.09, vol: 0.16 * k.g, pan: k.pan }); }
+      else { tone(sfx, { wave: 0.125, f0: 1320 * r, f1: 520 * r, dur: 0.05, vol: 0.11 * k.g, pan: k.pan }); noise(sfx, { type: 'highpass', f0: 5000, dur: 0.014, vol: 0.07 * k.g, pan: k.pan }); }
+    },
+    hit(e, k) {
+      if (e.b === 2) return; // 燃焼の継続ダメージは無音（鳴らすとうるさい）
+      const r = 1 + (Math.random() - 0.5) * 0.14;
+      noise(sfx, { type: 'bandpass', f0: 1100 * r, f1: 300, q: 1.2, dur: 0.055, vol: 0.26 * k.g, pan: k.pan });
+      tone(sfx, { wave: 'square', f0: 190 * r, f1: 85, dur: 0.05, vol: 0.13 * k.g, pan: k.pan });
+      if (e.b === 1) tone(sfx, { wave: 0.125, f0: 1760, f1: 2640, dur: 0.09, vol: 0.14 * k.g, pan: k.pan });
+    },
+    enemyDie(e, k) {
+      if (e.a === 'urn') {
+        noise(sfx, { type: 'bandpass', f0: 3200, q: 3, dur: 0.05, vol: 0.2 * k.g, pan: k.pan });
+        noise(sfx, { type: 'bandpass', f0: 4600, q: 4, dur: 0.07, vol: 0.14 * k.g, t: ac.currentTime + 0.035, pan: k.pan });
+        tone(sfx, { wave: 'triangle', f0: 880, f1: 380, dur: 0.07, vol: 0.12 * k.g, pan: k.pan });
+        return;
       }
-      au_scheduleStep(mus.step, mus.next);
-      mus.next += 60 / mus.tempo / 4;
-      mus.step = (mus.step + 1) % 16;
-    }
+      const big = (e.b || 0.3) > 1, base = big ? 150 : 520 / (0.6 + (e.b || 0.35));
+      noise(sfx, { type: 'lowpass', f0: big ? 1800 : 2600, f1: 180, dur: big ? 0.7 : 0.17, vol: (big ? 0.42 : 0.24) * k.g, pan: k.pan });
+      tone(sfx, { wave: 0.5, f0: base, dur: big ? 0.5 : 0.13, vol: 0.16 * k.g, steps: [base, base * 0.75, base * 0.5, base * 0.37], stepDur: big ? 0.12 : 0.032, pan: k.pan });
+    },
+    explode(e, k) {
+      const s = Math.min(1.5, 0.5 + (e.a || 1) * 0.35);
+      noise(sfx, { type: 'highpass', f0: 3000, dur: 0.02, vol: 0.3 * k.g * s, pan: k.pan });
+      tone(sfx, { wave: 'triangle', f0: 130, f1: 32, dur: 0.38, vol: 0.5 * k.g * s, pan: k.pan });
+      noise(sfx, { type: 'lowpass', f0: 3200, f1: 140, dur: 0.42, vol: 0.38 * k.g * s, pan: k.pan });
+      if (k.g > 0.5) duckMusic(0.6, 0.12);
+    },
+    chain(e, k) { tone(sfx, { wave: 'sawtooth', f0: 1600, dur: 0.075, vol: 0.1 * k.g, steps: [1600, 900, 1900, 700, 1400, 500], stepDur: 0.012, pan: k.pan }); },
+    bounce(e, k) { tone(sfx, { wave: 0.125, f0: 980, f1: 1500, dur: 0.03, vol: 0.06 * k.g, pan: k.pan }); },
+    playerHurt() {
+      tone(sfx, { wave: 'square', f0: 240, f1: 62, dur: 0.26, vol: 0.34 });
+      noise(sfx, { type: 'lowpass', f0: 2000, f1: 200, dur: 0.2, vol: 0.3 });
+      tone(sfx, { wave: 0.25, f0: 466, dur: 0.16, vol: 0.14, steps: [466, 440, 415, 392], stepDur: 0.04 });
+      duckMusic(0.3, 0.3);
+    },
+    death() { seq.track = null; seq.quietUntil = ac.currentTime + 60; jingle('dead'); noise(sfx, { type: 'lowpass', f0: 1500, f1: 80, dur: 1.2, vol: 0.3 }); },
+    dash() { noise(sfx, { type: 'bandpass', f0: 500, f1: 3200, q: 1.5, dur: 0.14, vol: 0.22 }); tone(sfx, { wave: 'triangle', f0: 260, f1: 620, dur: 0.1, vol: 0.12 }); },
+    pickup(e) {
+      const t = ac.currentTime;
+      if (e.a === 'xp') {
+        combo = t - comboT < 0.7 ? Math.min(combo + 1, 14) : 0; comboT = t;
+        const f = au_hz(81 + [0, 2, 3, 5, 7, 8, 10, 12, 14, 15, 17, 19, 20, 22, 24][combo]); // レの短音階を1歩ずつ上がる
+        tone(sfx, { wave: 0.25, f0: f, dur: 0.035, vol: 0.1 }); tone(sfx, { wave: 0.25, f0: f * 1.5, dur: 0.07, vol: 0.1, t: t + 0.035 });
+      } else if (e.a === 'oil') {
+        tone(sfx, { wave: 'triangle', f0: 380, f1: 760, dur: 0.07, vol: 0.26 }); tone(sfx, { wave: 'triangle', f0: 560, f1: 1120, dur: 0.1, vol: 0.24, t: t + 0.07 });
+      } else arpRun(['C6', 'E6', 'G6', 'C7'], 0.045, { vol: 0.16, wave: 0.5 });
+    },
+    levelUp() { arpRun(['D5', 'F5', 'A5', 'D6', 'F6', 'A6'], 0.055, { vol: 0.2, last: 0.35 }); duckMusic(0.5, 0.45); },
+    upgrade() { arpRun(['A5', 'D6'], 0.07, { vol: 0.2, wave: 0.5, last: 0.2 }); },
+    roomStart(e) {
+      tone(sfx, { wave: 'triangle', f0: 95, f1: 38, dur: 0.3, vol: 0.5 }); noise(sfx, { type: 'lowpass', f0: 900, f1: 120, dur: 0.25, vol: 0.34 });
+      noise(sfx, { type: 'bandpass', f0: 2600, q: 5, dur: 0.06, vol: 0.14, t: ac.currentTime + 0.02 }); // 鉄格子の金属音
+      if (e.a) arpRun(['D3', 'Eb3', 'D3', 'Ab2', 'D2'], 0.16, { vol: 0.3, wave: 0.25, last: 0.9 });
+    },
+    roomClear() { seq.track = null; seq.quietUntil = ac.currentTime + 1.3; jingle('clear'); },
+    wave() { tone(sfx, { wave: 0.25, f0: 110, dur: 0.1, vol: 0.2, sustain: 0.7 }); tone(sfx, { wave: 0.25, f0: 110, dur: 0.16, vol: 0.22, sustain: 0.7, t: ac.currentTime + 0.14 }); },
+    calm() { arpRun(['A5', 'D6', 'F6'], 0.09, { vol: 0.12, wave: 'triangle', last: 0.4 }); },
+    shrine() { arpRun(['D5', 'A5', 'D6', 'F#6', 'A6'], 0.1, { vol: 0.18, wave: 'triangle', last: 0.7 }); },
+    chest() { arpRun(['G5', 'B5', 'D6', 'G6', 'B6', 'D7'], 0.06, { vol: 0.18, wave: 0.125, last: 0.5 }); duckMusic(0.5, 0.5); },
+    stairs() { arpRun(['D5', 'E5', 'F5', 'A5', 'D6', 'A6'], 0.06, { vol: 0.16, wave: 0.125, last: 0.4 }); },
+    descend() { arpRun(['A5', 'F5', 'D5', 'A4', 'F4', 'D4'], 0.07, { vol: 0.18, wave: 0.25 }); tone(sfx, { wave: 'triangle', f0: 90, f1: 34, dur: 0.4, vol: 0.4, t: ac.currentTime + 0.42 }); },
+    torch(e, k) { noise(sfx, { type: 'lowpass', f0: 300, f1: 2600, dur: 0.16, vol: 0.2 * k.g, attack: 0.03, pan: k.pan }); tone(sfx, { wave: 'triangle', f0: 220, f1: 330, dur: 0.12, vol: 0.12 * k.g, pan: k.pan }); },
+    spawn(e, k) { tone(sfx, { wave: 'triangle', f0: 180, f1: 520, dur: 0.11, vol: 0.1 * k.g, attack: 0.05, pan: k.pan }); },
+    telegraph(e, k) { for (let i = 0; i < 2; i++) tone(sfx, { wave: 0.5, f0: 1047, dur: 0.045, vol: 0.13 * k.g, sustain: 0.9, t: ac.currentTime + i * 0.08, pan: k.pan }); },
+    charge(e, k) { tone(sfx, { wave: 'sawtooth', f0: 80, f1: 260, dur: 0.24, vol: 0.16 * k.g, pan: k.pan }); noise(sfx, { type: 'bandpass', f0: 400, f1: 1600, dur: 0.22, vol: 0.12 * k.g, pan: k.pan }); },
+    thud(e, k) { tone(sfx, { wave: 'triangle', f0: 110, f1: 34, dur: 0.24, vol: 0.5 * k.g * (e.a || 0.5) + 0.1, pan: k.pan }); noise(sfx, { type: 'lowpass', f0: 1400, f1: 150, dur: 0.2, vol: 0.3 * k.g, pan: k.pan }); },
+    fuse(e, k) { for (let i = 0; i < 4; i++) tone(sfx, { wave: 0.125, f0: 900 + i * 220, dur: 0.03, vol: 0.14 * k.g, t: ac.currentTime + i * 0.11, pan: k.pan }); },
+    summon(e, k) { tone(sfx, { wave: 0.25, f0: 740, dur: 0.3, vol: 0.13 * k.g, steps: [740, 622, 740, 554, 622, 466, 554, 415], stepDur: 0.038, pan: k.pan }); },
+    enemyShoot(e, k) { tone(sfx, { wave: 0.25, f0: 430, f1: 190, dur: 0.08, vol: 0.1 * k.g, pan: k.pan }); },
+    bossPhase() {
+      for (const n of ['D3', 'Eb3', 'A3']) tone(sfx, { wave: 0.25, f0: au_hz(au_midi(n)), dur: 0.9, vol: 0.2, sustain: 0.8 });
+      noise(sfx, { type: 'highpass', f0: 3500, dur: 0.9, vol: 0.2 }); tone(sfx, { wave: 'triangle', f0: 70, f1: 30, dur: 0.6, vol: 0.5 });
+      duckMusic(0.2, 0.9);
+    },
+    bossDie() {
+      seq.track = null; seq.quietUntil = ac.currentTime + 2.4;
+      noise(sfx, { type: 'lowpass', f0: 4000, f1: 100, dur: 1.8, vol: 0.4 });
+      for (let i = 0; i < 6; i++) tone(sfx, { wave: 'triangle', f0: 140 - i * 14, f1: 30, dur: 0.3, vol: 0.4, t: ac.currentTime + i * 0.22 });
+    },
+    win() { seq.track = null; seq.quietUntil = ac.currentTime + 60; jingle('win', 2.2); },
+    heal() { arpRun(['E6', 'A6'], 0.07, { vol: 0.14, wave: 'triangle', last: 0.2 }); },
+    darkHunt() { for (let i = 0; i < 5; i++) tone(sfx, { wave: 'triangle', f0: 73.4, dur: 0.11, vol: 0.34, t: ac.currentTime + i * 0.13 }); },
+  };
+
+  function jingle(name, delay = 0) {
+    const j = au_JINGLE[name], s = 60 / j.bpm / 4, t0 = ac.currentTime + 0.03 + delay, ch = au_CHORD[j.chord];
+    for (const [n, at, len] of j.notes) tone(music, { wave: 0.25, f0: au_hz(au_midi(n)), dur: len * s * 0.95, vol: 0.22, sustain: 0.7, t: t0 + at * s, vib: true, echo: true });
+    const end = Math.max(...j.notes.map(x => x[1] + x[2]));
+    for (let st = 0; st < end; st += 2) tone(music, { wave: 'triangle', f0: au_hz(au_midi(ch[(st >> 1) % 3 === 2 ? 2 : 0] + '3')), dur: s * 1.8, vol: 0.3, sustain: 0.8, t: t0 + st * s });
+    if (name !== 'dead') noise(music, { type: 'highpass', f0: 5000, dur: 0.5, vol: 0.14, t: t0 });
   }
-  function au_schedulePad(t0, tempo) {
-    const dur = (60 / tempo) * 4 * 1.4; // 次の小節の和音と少しだけ重ねてつなぐ
-    const chord = scene === 'win' ? au_WIN_CHORD : au_CHORDS[(mus.bar - 1) % 4];
-    const lp = ac.createBiquadFilter();
-    lp.type = 'lowpass';
-    lp.frequency.value = mus.padCut;
-    lp.Q.value = 0.8;
-    const lfo = ac.createOscillator();
-    const lg = ac.createGain();
-    lfo.frequency.value = 0.055 + (mus.bar % 3) * 0.012;
-    lg.gain.value = 130;
-    lfo.connect(lg);
-    lg.connect(lp.frequency);
-    const notes = [chord[0], chord[1] ?? chord[0], chord[3] ?? chord[2] ?? chord[0]];
-    const detunes = [-7, 6, -4], levels = [0.65, 0.5, 0.38];
-    for (let i = 0; i < notes.length; i++) {
-      const osc = ac.createOscillator();
-      osc.type = i === 2 ? 'triangle' : 'sawtooth';
-      osc.frequency.value = au_mtof(notes[i]);
-      osc.detune.value = detunes[i];
-      const ng = ac.createGain();
-      ng.gain.value = levels[i];
-      const p = ac.createStereoPanner();
-      p.pan.value = i === 0 ? -0.22 : i === 1 ? 0.2 : -0.05;
-      osc.connect(ng);
-      ng.connect(p);
-      p.connect(lp);
-      osc.start(t0);
-      osc.stop(t0 + dur + 0.05);
-    }
-    lfo.start(t0);
-    lfo.stop(t0 + dur + 0.05);
-    const bus = ac.createGain();
-    bus.gain.value = 0.0001;
-    lp.connect(bus);
-    bus.connect(padGain);
-    au_padEnv(bus.gain, t0, dur, 0.16, 0.5);
-    padFilters = padFilters.filter(x => x.end > ac.currentTime);
-    padFilters.push({ f: lp, end: t0 + dur });
-  }
-  function au_scheduleStep(step, t) {
-    if (scene === 'title' || scene === 'win' || scene === 'dead') return;
-    const chord = au_CHORDS[(mus.bar - 1) % 4];
-    const i = mus.intensity;
-    if (i > 0.25 && step % 2 === 0) au_schedulePluck(t, chord);
-    if (i > 0.4 && (step === 0 || step === 8)) au_scheduleBass(t, chord);
-    if (i > 0.55) {
-      if (step === 0 || step === 6 || step === 8 || step === 11) au_musicKick(t);
-      au_musicHat(t, step % 2 === 0);
-      if (step === 4 || step === 12) au_musicSnare(t);
-    }
-    if (mus.boss && step % 2 === 0) au_scheduleBoss(t, step);
-    if (mus.lowOil && (step === 0 || step === 8)) au_heartbeat(t);
-  }
-  function au_schedulePluck(t, chord) {
-    mus.lcg = (Math.imul(mus.lcg, 1664525) + 1013904223) >>> 0;
-    const idx = (mus.lcg >>> 15) % chord.length;
-    const octave = (mus.lcg & 0x80) ? 12 : 0;
-    const f = au_mtof(chord[idx] + 12 + octave);
-    const pan = (((mus.lcg >>> 8) & 31) / 31 - 0.5) * 0.7;
-    au_tone(ac, pluckGain, { type: 'triangle', f0: f, f1: f * 0.998, dur: 0.28,
-      gain: 0.055, attack: 0.004, pan, t });
-  }
-  function au_scheduleBass(t, chord) {
-    const f = au_mtof(chord[0] - 12);
-    au_tone(ac, bassGain, { type: 'sine', f0: f, f1: f * 0.995, dur: 0.36, gain: 0.055, attack: 0.005, pan: 0, t });
-    au_tone(ac, bassGain, { type: 'sine', f0: f * 0.5, dur: 0.3, gain: 0.026, attack: 0.006, pan: 0, t });
-  }
-  function au_musicKick(t) {
-    au_tone(ac, drumGain, { type: 'sine', f0: 110, f1: 40, dur: 0.18, gain: 0.1, attack: 0.002, pan: 0, t });
-  }
-  function au_musicHat(t, accent) {
-    au_noise(ac, noise, drumGain, { type: 'highpass', f0: 6500, dur: 0.035,
-      gain: accent ? 0.018 : 0.009, attack: 0.001, pan: accent ? -0.14 : 0.14, t });
-  }
-  function au_musicSnare(t) {
-    au_noise(ac, noise, drumGain, { type: 'bandpass', f0: 1700, f1: 1200, dur: 0.11,
-      gain: 0.035, q: 1.1, attack: 0.002, pan: 0.06, t });
-    au_tone(ac, drumGain, { type: 'triangle', f0: 180, f1: 120, dur: 0.08,
-      gain: 0.022, attack: 0.002, pan: 0.06, t });
-  }
-  function au_scheduleBoss(t, step) {
-    const f = au_mtof([38, 39, 38, 44][(step / 2) % 4]);
-    au_tone(ac, bossGain, { type: 'sawtooth', f0: f, f1: f * 0.997, dur: 0.24,
-      gain: 0.045, attack: 0.004, lp: 420, pan: -0.15, t });
-  }
-  function au_heartbeat(t) {
-    au_tone(ac, musicBus, { type: 'sine', f0: 55, f1: 40, dur: 0.15, gain: 0.05, attack: 0.008, pan: 0, t });
-    au_tone(ac, musicBus, { type: 'sine', f0: 48, f1: 36, dur: 0.13, gain: 0.033, attack: 0.008, pan: 0, t: t + 0.2 });
-  }
-  function update(G, dt) {
-    if (!ac || ac.state !== 'running') return;
+
+  function onEvents(events, G) {
+    if (!ready() || !events || !events.length || scene === 'title') return; // タイトルのデモは BGM だけ
+    const now = ac.currentTime;
     try {
-      const d = Number.isFinite(dt) ? au_clamp(dt, 0.001, 0.1) : 0.016;
-      mus.boss = au_hasBoss(G);
-      const oilMax = G && G.player && G.player.stats ? G.player.stats.oilMax : 0;
-      mus.lowOil = !!(G && G.player && oilMax > 0 && G.player.oil / oilMax < 0.2);
-      const target = au_targetIntensity(G);
-      const tau = scene === 'dead' ? 0.5 : 1.5;
-      mus.intensity += (target - mus.intensity) * (1 - Math.exp(-d / tau));
-      au_mixMusic();
-      au_updatePadDark();
-      au_scheduleMusic();
-    } catch {}
+      for (const e of events) {
+        const fn = FX[e.type];
+        if (!fn) continue;
+        const gap = au_GAP[e.type];
+        if (gap && now - (last[e.type] || -10) < gap) continue;
+        let g = 1, pan = 0;
+        if (G && G.player && Number.isFinite(e.x)) {
+          const dx = e.x - G.player.x, d = Math.hypot(dx, e.y - G.player.y);
+          g = 1 / (1 + (d / 9) * (d / 9)); pan = Math.max(-0.8, Math.min(0.8, dx / 12));
+          if (g < 0.08) continue; // 遠すぎる音は鳴らさない
+        }
+        if (voices > 22 && gap) continue; // 鳴りすぎたら、頻度の高い音から間引く
+        last[e.type] = now; voices++;
+        setTimeout(() => { voices--; }, 180);
+        fn(e, { g, pan });
+      }
+    } catch { /* 音の失敗でゲームを止めない */ }
   }
+
+  // ---------------------------------------------------------------- BGM
+  const compiled = {};
+  function compile(name) { // 曲データを「16分音符ごとに何を鳴らすか」の表に直す
+    if (compiled[name]) return compiled[name];
+    const T = AUDIO_TRACKS[name], bars = T.lead.length, lead = [], bass = [];
+    for (let b = 0; b < bars; b++) {
+      let at = b * 16;
+      for (const x of au_parseLine(T.lead[b])) { if (x.n !== '-') lead[at] = { f: au_hz(au_midi(x.n)), len: x.len }; at += x.len; }
+      const root = au_midi(au_CHORD[T.chords[b]][0] + '2');
+      at = b * 16;
+      for (const x of au_parseLine(T.bass[b % T.bass.length])) {
+        const semi = x.n === '1' ? 0 : x.n === '5' ? 7 : x.n === '8' ? 12 : -1;
+        if (semi >= 0) bass[at] = { f: au_hz(root + semi), len: x.len };
+        at += x.len;
+      }
+    }
+    return (compiled[name] = { T, bars, lead, bass });
+  }
+
+  function scheduleStep(c, step, t, s) {
+    const T = c.T, bar = (step / 16) | 0, pos = step % 16, ch = au_CHORD[T.chords[bar]];
+    const L = c.lead[step];
+    if (L) tone(music, { wave: T.duty, f0: L.f, dur: Math.max(0.05, L.len * s * 0.92), vol: T.leadVol, sustain: 0.62, t, vib: true, echo: true, pan: -0.12 });
+    const B = c.bass[step];
+    if (B) tone(music, { wave: 'triangle', f0: B.f, dur: Math.max(0.05, B.len * s * 0.9), vol: T.bassVol, sustain: 0.85, t });
+    if (T.arp === 'broken') { // 8分音符の分散和音
+      if (pos % 2 === 0) {
+        const n = ch[[0, 1, 2, 1, 0, 2, 1, 2][pos >> 1]], oct = pos % 8 === 6 ? '5' : '4';
+        tone(music, { wave: 0.125, f0: au_hz(au_midi(n + oct)), dur: s * 1.7, vol: T.arpVol, t, pan: 0.3 });
+      }
+    } else if ('x..x..x.x..x..x.'[pos] === 'x') { // 和音を高速で回す「チップ和音」をリズムで刻む
+      const f = ch.map(n => au_hz(au_midi(n + '4')));
+      tone(music, { wave: 0.125, f0: f[0], dur: s * 1.6, vol: T.arpVol, t, steps: [f[0], f[1], f[2], f[0] * 2, f[1], f[2]], stepDur: (s * 1.6) / 6, pan: 0.3, sustain: 0.8 });
+    }
+    if (T.drumVol > 0) {
+      const d = T.drums[bar % T.drums.length][pos], v = T.drumVol;
+      if (d === 'k') { tone(music, { wave: 'triangle', f0: 160, f1: 42, dur: 0.11, vol: 0.55 * v, t }); noise(music, { type: 'lowpass', f0: 900, dur: 0.02, vol: 0.12 * v, t }); }
+      else if (d === 's') { noise(music, { type: 'bandpass', f0: 1900, q: 0.7, dur: 0.12, vol: 0.3 * v, t }); tone(music, { wave: 'triangle', f0: 230, f1: 150, dur: 0.06, vol: 0.2 * v, t }); }
+      else if (d === 'h') noise(music, { type: 'highpass', f0: 7500, dur: 0.03, vol: (pos % 4 === 2 ? 0.13 : 0.08) * v, t });
+      if (step === 0) noise(music, { type: 'highpass', f0: 5200, dur: 0.5, vol: 0.12 * v, t }); // 曲の頭にクラッシュ
+    }
+  }
+
+  function wantedTrack(G) {
+    if (scene === 'title') return 'title';
+    if (scene === 'dead' || scene === 'win' || !G) return null;
+    for (const e of G.enemies) if (e.type === 'unlit' && !e.dead) return 'boss';
+    return G.activeRoom >= 0 ? 'combat' : 'explore';
+  }
+
+  function update(G) {
+    if (!ready()) return;
+    try {
+      const now = ac.currentTime, want = wantedTrack(G);
+      if (now < 0.05) return; // 出力が動き出す前は時計が進まないので、予約を始めない
+      if (now < seq.quietUntil) return; // ジングルが鳴り終わるまで BGM を止めておく
+      if (!want) { seq.track = null; return; }
+      // 別の曲へは小節の頭で切り替える（ボス戦だけは即座に）
+      const cur = seq.track;
+      if (cur !== want && (cur === null || seq.step % 16 === 0 || want === 'boss')) {
+        if (cur !== null && seq.next > now + 0.25) return;
+        seq.track = want; seq.step = 0; seq.quietUntil = 0;
+        seq.next = Math.max(now + 0.06, cur === null ? 0 : seq.next);
+        const T = AUDIO_TRACKS[want];
+        echoDelay.delayTime.setValueAtTime((60 / T.bpm / 4) * 3, now); // 付点8分の山びこ
+        echoIn.gain.setValueAtTime(T.echo, now);
+        if (cur !== null && want !== 'title') { noise(music, { type: 'bandpass', f0: 1900, dur: 0.1, vol: 0.2, t: seq.next - 0.11 }); }
+      }
+      if (!seq.track) return;
+      const c = compile(seq.track), s = 60 / c.T.bpm / 4;
+      if (seq.next < now) seq.next = now + 0.03;
+      let guard = 0;
+      // 描画が遅いフレームでも音が途切れないよう、0.35 秒先まで予約しておく
+      while (seq.next < now + 0.35 && guard++ < 48) {
+        scheduleStep(c, seq.step, seq.next, s);
+        seq.next += s; seq.step = (seq.step + 1) % (c.bars * 16);
+        if (seq.step % 16 === 0 && wantedTrack(G) !== seq.track) break; // 小節の頭に来たら切り替えを優先
+      }
+    } catch { /* 音の失敗でゲームを止めない */ }
+  }
+
+  function setScene(name) {
+    if (!['title', 'game', 'paused', 'dead', 'win'].includes(name)) return;
+    const prev = scene;
+    scene = name;
+    if (!ac) return;
+    const t = ac.currentTime;
+    lowpass.frequency.setTargetAtTime(name === 'paused' ? 500 : 20000, t, 0.08); // ポーズ中はこもらせる
+    if (name !== 'paused' && prev !== 'paused' && name !== prev) { seq.track = null; if (name === 'game' || name === 'title') seq.quietUntil = 0; }
+  }
+
   return { unlock, setVolumes, setMuted, setScene, onEvents, update };
 }

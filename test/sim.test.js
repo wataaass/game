@@ -9,6 +9,7 @@ import { createGame, step, hashState, WIN_DEPTH } from '../src/sim/game.js';
 import { createBot, botInput } from '../src/sim/bot.js';
 import { buildSegments, visPolygon } from '../src/render/visibility.js';
 import { buildAtlas } from '../src/render/atlas.js';
+import { AUDIO_TRACKS, au_parseLine, au_midi, createAudio } from '../src/audio/audio.js';
 
 const idle = { mx: 0, my: 0, aim: 0, btn: 0, choice: 0 };
 
@@ -163,4 +164,28 @@ test('アトラス: 描画が参照するスプライトがすべて生成され
   let opaque = 0;
   for (let i = 3; i < a.pixels.length; i += 4) if (a.pixels[i]) opaque++;
   assert.ok(opaque > 5000);
+});
+
+test('BGM: どの曲も全小節が16分音符16個ぶんで、音名と和音が正しい', () => {
+  for (const [name, T] of Object.entries(AUDIO_TRACKS)) {
+    assert.equal(T.lead.length, T.chords.length, name);
+    T.lead.forEach((bar, i) => {
+      const notes = au_parseLine(bar);
+      assert.equal(notes.reduce((a, x) => a + x.len, 0), 16, `${name} 主旋律 ${i + 1} 小節目`);
+      for (const x of notes) { const m = au_midi(x.n); assert.ok(m === -1 || (m >= 55 && m <= 96), `${name}: ${x.n}`); }
+    });
+    for (const bar of T.bass) assert.equal(au_parseLine(bar).reduce((a, x) => a + x.len, 0), 16, `${name} ベース`);
+    for (const bar of T.drums) { assert.equal(bar.length, 16, `${name} ドラム`); assert.match(bar, /^[ksh.]+$/); }
+    assert.ok(T.bpm >= 60 && T.bpm <= 180);
+  }
+  assert.equal(au_midi('A4'), 69);
+  assert.equal(au_midi('C#5'), 73);
+  assert.equal(au_midi('Bb3'), 58);
+  assert.throws(() => au_midi('H2'));
+});
+
+test('音: AudioContext のない環境では何もしない（例外を出さない）', () => {
+  const a = createAudio();
+  a.unlock(); a.setVolumes({ master: 1, music: 1, sfx: 1 }); a.setMuted(true); a.setScene('game');
+  a.onEvents([{ type: 'hit', x: 0, y: 0, a: 1, b: 0 }], null); a.update(null, 0.016);
 });
