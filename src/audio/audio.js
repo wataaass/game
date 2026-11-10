@@ -15,6 +15,7 @@ const au_hz = n => 440 * Math.pow(2, (n - 69) / 12);
 const au_CHORD = {
   Dm: ['D', 'F', 'A'], Bb: ['Bb', 'D', 'F'], F: ['F', 'A', 'C'], C: ['C', 'E', 'G'], Gm: ['G', 'Bb', 'D'],
   A: ['A', 'C#', 'E'], Eb: ['Eb', 'G', 'Bb'], Am: ['A', 'C', 'E'], D: ['D', 'F#', 'A'], G: ['G', 'B', 'D'],
+  Cm: ['C', 'Eb', 'G'], E: ['E', 'G#', 'B'],
 };
 
 // 曲データ。1小節 = 16分音符16個。lead は「音名:長さ」、drums は k=キック s=スネア h=ハット o=クラッシュ。
@@ -29,6 +30,47 @@ export const AUDIO_TRACKS = {
     ],
     bass: ['1:6 1:2 5:4 1:4'],
     drums: ['k...h...k.h.h...', 'k...h...k.h.h.h.'],
+  },
+  // 2層: 苔むした洞。明るめの長調で、少し弾む
+  explore2: {
+    bpm: 104, duty: 0.5, leadVol: 0.15, arpVol: 0.06, bassVol: 0.38, drumVol: 0.5, arp: 'broken', echo: 0.28,
+    chords: ['F', 'C', 'Dm', 'Bb', 'F', 'C', 'Bb', 'C'],
+    lead: [
+      'A5:4 C6:2 A5:2 F5:4 G5:4', 'G5:4 E5:2 G5:2 C6:6 Bb5:2', 'A5:4 F5:2 D5:2 F5:4 A5:4', 'Bb5:6 A5:2 G5:4 F5:4',
+      'A5:4 C6:2 A5:2 F5:4 C6:4', 'E6:4 D6:2 C6:2 G5:8', 'F5:3 G5:3 Bb5:2 D6:4 C6:4', 'C6:6 Bb5:2 G5:8',
+    ],
+    bass: ['1:4 5:2 1:2 8:4 5:4'],
+    drums: ['k..hh...k..hh.h.', 'k..hh...k.khh.h.'],
+  },
+  // 3層: 冷たい墓所。ゆっくりで音数が少ない
+  explore3: {
+    bpm: 88, duty: 0.125, leadVol: 0.16, arpVol: 0.06, bassVol: 0.36, drumVol: 0.4, arp: 'broken', echo: 0.4,
+    chords: ['Gm', 'Eb', 'Bb', 'F', 'Gm', 'Eb', 'Cm', 'D'],
+    lead: [
+      'G5:6 D5:2 G5:4 Bb5:4', 'G5:8 Eb5:4 G5:4', 'F5:6 D5:2 Bb4:8', 'A5:4 F5:4 C5:8',
+      'G5:6 D5:2 G5:4 Bb5:4', 'Bb5:4 G5:4 Eb5:8', 'Eb5:3 G5:3 C6:2 Bb5:4 G5:4', 'A5:8 F#5:8',
+    ],
+    bass: ['1:8 5:4 1:4'],
+    drums: ['k.......h.....h.'],
+  },
+  // 4層: 熱を帯びた深部。食い気味のリズムで急かす
+  explore4: {
+    bpm: 112, duty: 0.25, leadVol: 0.16, arpVol: 0.06, bassVol: 0.4, drumVol: 0.6, arp: 'broken', echo: 0.25,
+    chords: ['Am', 'F', 'C', 'G', 'Am', 'F', 'Dm', 'E'],
+    lead: [
+      'A5:3 E5:3 A5:2 C6:4 B5:4', 'A5:3 F5:3 A5:2 C6:6 A5:2', 'G5:3 E5:3 G5:2 C6:4 E6:4', 'D6:3 B5:3 G5:2 B5:8',
+      'A5:3 E5:3 A5:2 C6:4 E6:4', 'F6:3 E6:3 C6:2 A5:8', 'F5:3 A5:3 D6:2 C6:4 A5:4', 'B5:6 G#5:2 E5:8',
+    ],
+    bass: ['1:3 1:3 5:2 1:3 8:3 5:2'],
+    drums: ['k..h..k.h.k.h.h.', 'k..h..k.h.k.hkh.'],
+  },
+  // 5層: 主の間の手前。半音でにじり寄る、音の少ない不穏な曲
+  explore5: {
+    bpm: 72, duty: 0.125, leadVol: 0.15, arpVol: 0.05, bassVol: 0.4, drumVol: 0.35, arp: 'broken', echo: 0.45,
+    chords: ['Dm', 'Eb', 'Dm', 'A', 'Dm', 'Eb', 'Gm', 'A'],
+    lead: ['D5:8 Eb5:8', 'G5:12 Eb5:4', 'D5:8 A5:8', 'C#5:16', 'D5:8 Eb5:8', 'Bb5:12 G5:4', 'G5:6 F5:6 D5:4', 'E5:8 C#5:8'],
+    bass: ['1:16'],
+    drums: ['k...............'],
   },
   combat: {
     bpm: 144, duty: 0.5, leadVol: 0.17, arpVol: 0.07, bassVol: 0.42, drumVol: 0.8, arp: 'stab', echo: 0.18,
@@ -86,7 +128,7 @@ export function createAudio() {
   let muted = false, scene = 'title', voices = 0, combo = 0, comboT = -10;
   const last = Object.create(null);
   // seq: いま鳴っている曲と、小節の頭で切り替える予定の曲
-  const seq = { track: null, want: 'title', next: 0, step: 0, quietUntil: 0 };
+  const seq = { track: null, want: 'title', next: 0, step: 0, shift: 0, quietUntil: 0 };
 
   function unlock() {
     const AC = typeof AudioContext !== 'undefined' ? AudioContext : typeof webkitAudioContext !== 'undefined' ? webkitAudioContext : null;
@@ -247,28 +289,28 @@ export function createAudio() {
         tone(sfx, { wave: 'triangle', f0: 380, f1: 760, dur: 0.07, vol: 0.26 }); tone(sfx, { wave: 'triangle', f0: 560, f1: 1120, dur: 0.1, vol: 0.24, t: t + 0.07 });
       } else arpRun(['C6', 'E6', 'G6', 'C7'], 0.045, { vol: 0.16, wave: 0.5 });
     },
-    levelUp() { arpRun(['D5', 'F5', 'A5', 'D6', 'F6', 'A6'], 0.055, { vol: 0.2, last: 0.35 }); duckMusic(0.5, 0.45); },
-    upgrade() { arpRun(['A5', 'D6'], 0.07, { vol: 0.2, wave: 0.5, last: 0.2 }); },
+    levelUp() { arpRun(['D5', 'F5', 'A5', 'D6', 'F6', 'A6'], 0.055, { vol: 0.1, last: 0.3 }); duckMusic(0.7, 0.35); },
+    upgrade() { arpRun(['A5', 'D6'], 0.07, { vol: 0.09, wave: 0.25, last: 0.18 }); },
     roomStart(e) {
       tone(sfx, { wave: 'triangle', f0: 95, f1: 38, dur: 0.3, vol: 0.5 }); noise(sfx, { type: 'lowpass', f0: 900, f1: 120, dur: 0.25, vol: 0.34 });
       noise(sfx, { type: 'bandpass', f0: 2600, q: 5, dur: 0.06, vol: 0.14, t: ac.currentTime + 0.02 }); // 鉄格子の金属音
       if (e.a) arpRun(['D3', 'Eb3', 'D3', 'Ab2', 'D2'], 0.16, { vol: 0.3, wave: 0.25, last: 0.9, shift: 0 });
     },
     roomClear() { seq.track = null; seq.quietUntil = ac.currentTime + 1.3; jingle('clear'); },
-    wave() { tone(sfx, { wave: 0.25, f0: 110, dur: 0.1, vol: 0.2, sustain: 0.7 }); tone(sfx, { wave: 0.25, f0: 110, dur: 0.16, vol: 0.22, sustain: 0.7, t: ac.currentTime + 0.14 }); },
+    // 敵の波の合図: 低い太鼓を1発（ブザーのような持続音は使わない）
+    wave() { tone(sfx, { wave: 'sine', f0: 120, f1: 48, dur: 0.22, vol: 0.4 }); noise(sfx, { type: 'lowpass', f0: 700, f1: 150, dur: 0.09, vol: 0.16 }); },
     calm() { arpRun(['A5', 'D6', 'F6'], 0.09, { vol: 0.12, wave: 'triangle', last: 0.4 }); },
     shrine() { arpRun(['D5', 'A5', 'D6', 'F#6', 'A6'], 0.1, { vol: 0.18, wave: 'triangle', last: 0.7 }); },
-    chest() { arpRun(['G5', 'B5', 'D6', 'G6', 'B6', 'D7'], 0.06, { vol: 0.18, wave: 0.125, last: 0.5 }); duckMusic(0.5, 0.5); },
+    chest() { arpRun(['G5', 'B5', 'D6', 'G6', 'B6', 'D7'], 0.06, { vol: 0.12, wave: 0.125, last: 0.45 }); duckMusic(0.7, 0.4); },
     stairs() { arpRun(['D5', 'E5', 'F5', 'A5', 'D6', 'A6'], 0.06, { vol: 0.16, wave: 0.125, last: 0.4 }); },
     descend() { arpRun(['A5', 'F5', 'D5', 'A4', 'F4', 'D4'], 0.07, { vol: 0.18, wave: 0.25 }); tone(sfx, { wave: 'triangle', f0: 90, f1: 34, dur: 0.4, vol: 0.4, t: ac.currentTime + 0.42 }); },
     torch(e, k) { noise(sfx, { type: 'lowpass', f0: 300, f1: 2600, dur: 0.16, vol: 0.2 * k.g, attack: 0.03, pan: k.pan }); tone(sfx, { wave: 'triangle', f0: 220, f1: 330, dur: 0.12, vol: 0.12 * k.g, pan: k.pan }); },
-    // 敵の出現: 闇が集まるような低いうなり → 実体化の短い打撃
+    // 敵の出現: 空気が吸い込まれるような雑音のふくらみ → 柔らかい低音で着地（音程のある持続音は使わない）
     spawn(e, k) {
-      const r = 1 + (Math.random() - 0.5) * 0.16, big = (e.a || 0.3) > 0.8 ? 0.6 : 1;
-      noise(sfx, { type: 'lowpass', f0: 260, f1: 1100, dur: 0.16, vol: 0.2 * k.g, attack: 0.1, pan: k.pan });
-      tone(sfx, { wave: 0.5, f0: 196 * r * big, f1: 92 * r * big, dur: 0.17, vol: 0.14 * k.g, attack: 0.02, pan: k.pan });
-      tone(sfx, { wave: 'triangle', f0: 150 * big, f1: 55, dur: 0.1, vol: 0.3 * k.g, t: ac.currentTime + 0.13, pan: k.pan });
-      noise(sfx, { type: 'bandpass', f0: 900, q: 1.5, dur: 0.045, vol: 0.16 * k.g, t: ac.currentTime + 0.13, pan: k.pan });
+      const r = 1 + (Math.random() - 0.5) * 0.2;
+      noise(sfx, { type: 'bandpass', f0: 350 * r, f1: 1300 * r, q: 2.2, dur: 0.15, vol: 0.2 * k.g, attack: 0.12, pan: k.pan });
+      tone(sfx, { wave: 'sine', f0: 105 * r, f1: 46, dur: 0.14, vol: 0.3 * k.g, t: ac.currentTime + 0.13, pan: k.pan });
+      noise(sfx, { type: 'lowpass', f0: 600, dur: 0.035, vol: 0.12 * k.g, t: ac.currentTime + 0.13, pan: k.pan });
     },
     telegraph(e, k) { for (let i = 0; i < 2; i++) tone(sfx, { wave: 0.5, f0: 587, dur: 0.05, vol: 0.13 * k.g, sustain: 0.9, t: ac.currentTime + i * 0.08, pan: k.pan }); },
     charge(e, k) { tone(sfx, { wave: 'sawtooth', f0: 80, f1: 260, dur: 0.24, vol: 0.16 * k.g, pan: k.pan }); noise(sfx, { type: 'bandpass', f0: 400, f1: 1600, dur: 0.22, vol: 0.12 * k.g, pan: k.pan }); },
@@ -324,13 +366,14 @@ export function createAudio() {
 
   // ---------------------------------------------------------------- BGM
   const compiled = {};
-  function compile(name) { // 曲データを「16分音符ごとに何を鳴らすか」の表に直す
-    if (compiled[name]) return compiled[name];
+  function compile(name, shift) { // 曲データを「16分音符ごとに何を鳴らすか」の表に直す。shift は半音単位の移調
+    const key = name + shift;
+    if (compiled[key]) return compiled[key];
     const T = AUDIO_TRACKS[name], bars = T.lead.length, lead = [], bass = [];
     for (let b = 0; b < bars; b++) {
       let at = b * 16; // 主旋律は譜面より1オクターブ下で鳴らす
-      for (const x of au_parseLine(T.lead[b])) { if (x.n !== '-') lead[at] = { f: au_hz(au_midi(x.n) - 12), len: x.len }; at += x.len; }
-      const root = au_midi(au_CHORD[T.chords[b]][0] + '2');
+      for (const x of au_parseLine(T.lead[b])) { if (x.n !== '-') lead[at] = { f: au_hz(au_midi(x.n) - 12 + shift), len: x.len }; at += x.len; }
+      const root = au_midi(au_CHORD[T.chords[b]][0] + '2') + shift;
       at = b * 16;
       for (const x of au_parseLine(T.bass[b % T.bass.length])) {
         const semi = x.n === '1' ? 0 : x.n === '5' ? 7 : x.n === '8' ? 12 : -1;
@@ -338,7 +381,7 @@ export function createAudio() {
         at += x.len;
       }
     }
-    return (compiled[name] = { T, bars, lead, bass });
+    return (compiled[key] = { T, bars, lead, bass, k: Math.pow(2, shift / 12) });
   }
 
   function scheduleStep(c, step, t, s) {
@@ -350,10 +393,10 @@ export function createAudio() {
     if (T.arp === 'broken') { // 8分音符の分散和音
       if (pos % 2 === 0) {
         const n = ch[[0, 1, 2, 1, 0, 2, 1, 2][pos >> 1]], oct = pos % 8 === 6 ? '4' : '3';
-        tone(music, { wave: 0.125, f0: au_hz(au_midi(n + oct)), dur: s * 1.7, vol: T.arpVol, t, pan: 0.3 });
+        tone(music, { wave: 0.125, f0: au_hz(au_midi(n + oct)) * c.k, dur: s * 1.7, vol: T.arpVol, t, pan: 0.3 });
       }
     } else if ('x..x..x.x..x..x.'[pos] === 'x') { // 和音を高速で回す「チップ和音」をリズムで刻む
-      const f = ch.map(n => au_hz(au_midi(n + '3')));
+      const f = ch.map(n => au_hz(au_midi(n + '3')) * c.k);
       tone(music, { wave: 0.125, f0: f[0], dur: s * 1.6, vol: T.arpVol, t, steps: [f[0], f[1], f[2], f[0] * 2, f[1], f[2]], stepDur: (s * 1.6) / 6, pan: 0.3, sustain: 0.8 });
     }
     if (T.drumVol > 0) {
@@ -369,7 +412,7 @@ export function createAudio() {
     if (scene === 'title') return 'title';
     if (scene === 'dead' || scene === 'win' || !G) return null;
     for (const e of G.enemies) if (e.type === 'unlit' && !e.dead) return 'boss';
-    return G.activeRoom >= 0 ? 'combat' : 'explore';
+    return G.activeRoom >= 0 ? 'combat' : ['explore', 'explore2', 'explore3', 'explore4', 'explore5'][(G.depth - 1) % 5];
   }
 
   function update(G) {
@@ -384,6 +427,8 @@ export function createAudio() {
       if (cur !== want && (cur === null || seq.step % 16 === 0 || want === 'boss')) {
         if (cur !== null && seq.next > now + 0.25) return;
         seq.track = want; seq.step = 0; seq.quietUntil = 0;
+        // 戦闘曲は層ごとに調を変える（同じ曲でも層が変わると色合いが変わる）
+        seq.shift = want === 'combat' && G ? [0, 2, -2, 3, 0][(G.depth - 1) % 5] : 0;
         seq.next = Math.max(now + 0.06, cur === null ? 0 : seq.next);
         const T = AUDIO_TRACKS[want];
         echoDelay.delayTime.setValueAtTime((60 / T.bpm / 4) * 3, now); // 付点8分の山びこ
@@ -391,7 +436,7 @@ export function createAudio() {
         if (cur !== null && want !== 'title') { noise(music, { type: 'bandpass', f0: 1900, dur: 0.1, vol: 0.2, t: seq.next - 0.11 }); }
       }
       if (!seq.track) return;
-      const c = compile(seq.track), s = 60 / c.T.bpm / 4;
+      const c = compile(seq.track, seq.shift), s = 60 / c.T.bpm / 4;
       if (seq.next < now) seq.next = now + 0.03;
       let guard = 0;
       // 描画が遅いフレームでも音が途切れないよう、0.35 秒先まで予約しておく
